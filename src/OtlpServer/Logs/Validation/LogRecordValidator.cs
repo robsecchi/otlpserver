@@ -28,6 +28,9 @@ public sealed class LogRecordValidator : ILogRecordValidator
 
     private readonly LogValidationOptions _options;
 
+    // Returned for the (very common) case of no issues, so a clean record allocates nothing.
+    private static readonly IReadOnlyList<LogRecordIssue> NoIssues = [];
+
     public LogRecordValidator(IOptions<LogValidationOptions> options)
     {
         _options = options.Value;
@@ -38,50 +41,53 @@ public sealed class LogRecordValidator : ILogRecordValidator
 
     public IReadOnlyList<LogRecordIssue> ValidateResource(Resource? resource)
     {
-        var issues = new List<LogRecordIssue>();
+        List<LogRecordIssue>? issues = null;
         if (resource is not null)
         {
-            AddDuplicateKeyIssue(issues, "duplicate_resource_attribute_key",
+            AddDuplicateKeyIssue(ref issues, "duplicate_resource_attribute_key",
                 DuplicateKeyFinder.Find(resource.Attributes, "attributes"));
         }
-        return issues;
+        return issues ?? NoIssues;
     }
 
     public IReadOnlyList<LogRecordIssue> ValidateScope(InstrumentationScope? scope)
     {
-        var issues = new List<LogRecordIssue>();
+        List<LogRecordIssue>? issues = null;
         if (scope is not null)
         {
-            AddDuplicateKeyIssue(issues, "duplicate_scope_attribute_key",
+            AddDuplicateKeyIssue(ref issues, "duplicate_scope_attribute_key",
                 DuplicateKeyFinder.Find(scope.Attributes, "attributes"));
         }
-        return issues;
+        return issues ?? NoIssues;
     }
+
+    /// <summary>The list is only created for the first issue: clean records allocate nothing.</summary>
+    private static void Add(ref List<LogRecordIssue>? issues, LogRecordIssue issue) => (issues ??= new(2)).Add(issue);
 
     /// <summary>
     /// Turns a found duplicate into an issue whose severity follows
     /// <see cref="LogValidationOptions.DuplicateAttributeKeys"/>. The rule names differ per level
     /// (resource / scope / record) so error_message shows each one separately.
     /// </summary>
-    private void AddDuplicateKeyIssue(List<LogRecordIssue> issues, string rule, (string Path, string Key)? duplicate)
+    private void AddDuplicateKeyIssue(ref List<LogRecordIssue>? issues, string rule, (string Path, string Key)? duplicate)
     {
         if (duplicate is not { } found) return;
 
         var detail = $"key '{found.Key}' appears more than once in {found.Path}";
         if (_options.DuplicateAttributeKeys == DuplicateAttributeKeyHandling.AcceptWithWarning)
         {
-            issues.Add(new(IssueSeverity.Warning, rule,
+            Add(ref issues, new(IssueSeverity.Warning, rule,
                 $"{detail}; accepted because {LogValidationOptions.SectionName}:{nameof(LogValidationOptions.DuplicateAttributeKeys)}={DuplicateAttributeKeyHandling.AcceptWithWarning}"));
         }
         else
         {
-            issues.Add(new(IssueSeverity.Rejection, rule, detail));
+            Add(ref issues, new(IssueSeverity.Rejection, rule, detail));
         }
     }
 
     public IReadOnlyList<LogRecordIssue> Validate(LogRecord record)
     {
-        var issues = new List<LogRecordIssue>();
+        List<LogRecordIssue>? issues = null;
 
         // ---- Rejections ------------------------------------------------------------
 
@@ -90,14 +96,14 @@ public sealed class LogRecordValidator : ILogRecordValidator
         // means nothing in the Log Data Model, so the record can't be classified.
         if (!Enum.IsDefined(record.SeverityNumber))
         {
-            issues.Add(new(IssueSeverity.Rejection, "severity_number_out_of_range",
+            Add(ref issues, new(IssueSeverity.Rejection, "severity_number_out_of_range",
                 $"severity_number={(int)record.SeverityNumber} is outside the valid range 0..24"));
         }
 
         // ---- Duplicate keys: rejection or warning, depending on configuration ---------
 
         // Attributes first, then the body (which may be a map, or contain maps).
-        AddDuplicateKeyIssue(issues, "duplicate_attribute_key",
+        AddDuplicateKeyIssue(ref issues, "duplicate_attribute_key",
             DuplicateKeyFinder.Find(record.Attributes, "attributes") ?? DuplicateKeyFinder.Find(record.Body, "body"));
 
         // ---- Warnings (record still accepted) ---------------------------------------
@@ -108,7 +114,7 @@ public sealed class LogRecordValidator : ILogRecordValidator
         var traceIdValid = IsValidId(record.TraceId, TraceIdLength);
         if (!record.TraceId.IsEmpty && !traceIdValid)
         {
-            issues.Add(new(IssueSeverity.Warning, "invalid_trace_id",
+            Add(ref issues, new(IssueSeverity.Warning, "invalid_trace_id",
                 $"trace_id has {record.TraceId.Length} byte(s) or is all zeroes (expected {TraceIdLength} non-zero bytes); record treated as not associated with a trace"));
         }
 
@@ -116,14 +122,14 @@ public sealed class LogRecordValidator : ILogRecordValidator
         var spanIdValid = IsValidId(record.SpanId, SpanIdLength);
         if (!record.SpanId.IsEmpty && !spanIdValid)
         {
-            issues.Add(new(IssueSeverity.Warning, "invalid_span_id",
+            Add(ref issues, new(IssueSeverity.Warning, "invalid_span_id",
                 $"span_id has {record.SpanId.Length} byte(s) or is all zeroes (expected {SpanIdLength} non-zero bytes); record treated as not associated with a span"));
         }
 
         // "If the sender specifies a valid span_id then it SHOULD also specify a valid trace_id."
         if (spanIdValid && !traceIdValid)
         {
-            issues.Add(new(IssueSeverity.Warning, "span_id_without_trace_id",
+            Add(ref issues, new(IssueSeverity.Warning, "span_id_without_trace_id",
                 "span_id is set but trace_id is missing or invalid"));
         }
 
@@ -131,11 +137,11 @@ public sealed class LogRecordValidator : ILogRecordValidator
         // reserved and must be set to 0". Readers mask them out, so this is harmless.
         if ((record.Flags & ReservedFlagsMask) != 0)
         {
-            issues.Add(new(IssueSeverity.Warning, "reserved_flags_set",
+            Add(ref issues, new(IssueSeverity.Warning, "reserved_flags_set",
                 $"flags=0x{record.Flags:X8} has reserved bits set (only the lowest 8 bits may be used)"));
         }
 
-        return issues;
+        return issues ?? NoIssues;
     }
 
     private static bool IsValidId(ByteString id, int expectedLength)

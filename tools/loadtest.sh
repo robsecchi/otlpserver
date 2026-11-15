@@ -69,9 +69,16 @@ run_scenario "" --transport grpc --batch 8192 --concurrency 8
 # Authentication overhead.
 run_scenario "$AUTH_ENV" --transport grpc --batch 512 --concurrency 32 --api-key "$API_KEY" --label "grpc/protobuf b512 c32, API key"
 
-# GC mode experiment. Default (from the Web SDK) = Server GC, which in .NET 9+ adapts its
-# number of heaps (DATAS). Compared with: Server GC with DATAS off (one heap per core, the old
-# behavior) and Workstation GC (one heap, collects much sooner).
+# gRPC over several HTTP/2 connections: is ONE connection a ceiling? (Kestrel reads each HTTP/2
+# connection's frames one at a time; the HTTP/1.1 runs above use up to 32 connections.)
+run_scenario "" --transport grpc --batch 512 --concurrency 32 --connections 4 --label "grpc/protobuf b512 c32, 4 connections"
+run_scenario "" --transport grpc --batch 512 --concurrency 32 --connections 8 --label "grpc/protobuf b512 c32, 8 connections"
+run_scenario "" --transport grpc --batch 8192 --concurrency 8 --connections 4 --label "grpc/protobuf b8192 c8, 4 connections"
+
+# GC mode experiment (GC_EXPERIMENT=1 tools/loadtest.sh). Default (from the Web SDK) = Server
+# GC, which in .NET 9+ adapts its number of heaps (DATAS). Compared with: Server GC with DATAS
+# off and Workstation GC. Result (S2.2): keep the default; Workstation GC is 3-5x slower.
+if [[ "${GC_EXPERIMENT:-0}" != "1" ]]; then exit 0; fi
 run_scenario "DOTNET_GCDynamicAdaptationMode=0" --transport grpc --batch 8192 --concurrency 8 --label "grpc/protobuf b8192 c8, Server GC without DATAS"
 run_scenario "DOTNET_gcServer=0" --transport grpc --batch 8192 --concurrency 8 --label "grpc/protobuf b8192 c8, Workstation GC"
 run_scenario "DOTNET_gcServer=0" --transport grpc --batch 512 --concurrency 32 --label "grpc/protobuf b512 c32, Workstation GC"

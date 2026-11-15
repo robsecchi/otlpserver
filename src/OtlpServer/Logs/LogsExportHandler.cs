@@ -105,16 +105,22 @@ public sealed class LogsExportHandler : ILogsExportHandler
         var outcome = new LogsExportOutcome();
 
         // Locations are paths into the request, shown in error_message so the sender can find
-        // the problem, e.g. "resource_logs[0].scope_logs[1].log_records[7]".
+        // the problem, e.g. "resource_logs[0].scope_logs[1].log_records[7]". They are only
+        // turned into strings when there is an issue to report: this loop runs for every record,
+        // and a clean record must allocate nothing.
         for (var r = 0; r < request.ResourceLogs.Count; r++)
         {
             var resourceLogs = request.ResourceLogs[r];
-            var recordsInResource = resourceLogs.ScopeLogs.Sum(s => (long)s.LogRecords.Count);
+            long recordsInResource = 0;
+            for (var s = 0; s < resourceLogs.ScopeLogs.Count; s++)
+            {
+                recordsInResource += resourceLogs.ScopeLogs[s].LogRecords.Count;
+            }
             if (recordsInResource == 0) continue; // nothing to accept or drop
 
             // A rejected resource drops every record under it, uninspected: they would be
             // stored with an ambiguous identity.
-            if (Report(outcome, _validator.ValidateResource(resourceLogs.Resource), $"resource_logs[{r}].resource"))
+            if (Report(outcome, _validator.ValidateResource(resourceLogs.Resource), new Location(r)))
             {
                 outcome.RecordsRejected(recordsInResource);
                 continue;
@@ -126,7 +132,7 @@ public sealed class LogsExportHandler : ILogsExportHandler
                 if (scopeLogs.LogRecords.Count == 0) continue;
 
                 // Same idea one level down: a rejected scope drops its records.
-                if (Report(outcome, _validator.ValidateScope(scopeLogs.Scope), $"resource_logs[{r}].scope_logs[{s}].scope"))
+                if (Report(outcome, _validator.ValidateScope(scopeLogs.Scope), new Location(r, s)))
                 {
                     outcome.RecordsRejected(scopeLogs.LogRecords.Count);
                     continue;
@@ -134,8 +140,7 @@ public sealed class LogsExportHandler : ILogsExportHandler
 
                 for (var l = 0; l < scopeLogs.LogRecords.Count; l++)
                 {
-                    var location = $"resource_logs[{r}].scope_logs[{s}].log_records[{l}]";
-                    if (Report(outcome, _validator.Validate(scopeLogs.LogRecords[l]), location))
+                    if (Report(outcome, _validator.Validate(scopeLogs.LogRecords[l]), new Location(r, s, l)))
                     {
                         outcome.RecordsRejected(1);
                     }
@@ -154,12 +159,29 @@ public sealed class LogsExportHandler : ILogsExportHandler
     /// Adds the issues to the outcome. Returns true if any of them is a Rejection: one is
     /// enough to drop the item. Warnings alone never drop it.
     /// </summary>
-    private static bool Report(LogsExportOutcome outcome, IReadOnlyList<LogRecordIssue> issues, string location)
+    private static bool Report(LogsExportOutcome outcome, IReadOnlyList<LogRecordIssue> issues, Location location)
     {
-        foreach (var issue in issues)
+        if (issues.Count == 0) return false; // the common case: nothing to build, nothing to report
+
+        var path = location.ToString();
+        var rejected = false;
+        for (var i = 0; i < issues.Count; i++)
         {
-            outcome.AddIssue(issue, location);
+            outcome.AddIssue(issues[i], path);
+            rejected |= issues[i].Severity == IssueSeverity.Rejection;
         }
-        return issues.Any(i => i.Severity == IssueSeverity.Rejection);
+        return rejected;
+    }
+
+    /// <summary>
+    /// Where an item sits in the request, as plain indexes. A struct, so carrying it costs
+    /// nothing; the string is only built (ToString) when there is an issue to report.
+    /// </summary>
+    private readonly record struct Location(int Resource, int Scope = -1, int Record = -1)
+    {
+        public override string ToString() =>
+            Scope < 0 ? $"resource_logs[{Resource}].resource"
+            : Record < 0 ? $"resource_logs[{Resource}].scope_logs[{Scope}].scope"
+            : $"resource_logs[{Resource}].scope_logs[{Scope}].log_records[{Record}]";
     }
 }

@@ -91,6 +91,47 @@ public sealed class DuplicateKeyValidationTests
     }
 
     [Fact]
+    public void Large_attribute_sets_are_checked_too()
+    {
+        // Sets above 16 keys take the HashSet path instead of pairwise comparison.
+        var record = ValidRecord(); // has "k"
+        for (var i = 0; i < 30; i++) record.Attributes.Add(Attribute($"attr.{i}", "v"));
+        Assert.Empty(Validator().Validate(record));
+
+        record.Attributes.Add(Attribute("attr.7", "again"));
+        var issue = Assert.Single(Validator().Validate(record));
+        Assert.Contains("'attr.7'", issue.Detail);
+    }
+
+    [Fact]
+    public void Reported_duplicate_is_the_first_key_that_repeats()
+    {
+        var record = ValidRecord(); // "k"
+        record.Attributes.Add(Attribute("a", "1"));
+        record.Attributes.Add(Attribute("b", "1"));
+        record.Attributes.Add(Attribute("b", "2")); // repeats first...
+        record.Attributes.Add(Attribute("a", "2")); // ...this one repeats later
+
+        Assert.Contains("'b'", Assert.Single(Validator().Validate(record)).Detail);
+    }
+
+    [Fact]
+    public void Path_to_a_deeply_nested_duplicate_is_complete()
+    {
+        var record = ValidRecord();
+        record.Body = Map(new KeyValue
+        {
+            Key = "outer",
+            Value = new AnyValue
+            {
+                ArrayValue = new ArrayValue { Values = { Map(Attribute("x", "1")), Map(Attribute("y", "1"), Attribute("y", "2")) } },
+            },
+        });
+
+        Assert.Contains("body[\"outer\"][1]", Assert.Single(Validator().Validate(record)).Detail);
+    }
+
+    [Fact]
     public void Keys_are_case_sensitive()
     {
         var record = ValidRecord();
