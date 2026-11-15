@@ -64,6 +64,31 @@ public static class OtlpJsonCodec
     private static readonly JsonFormatter Formatter = new(JsonFormatter.Settings.Default
         .WithTypeRegistry(TypeRegistry.FromMessages(BadRequest.Descriptor, RetryInfo.Descriptor)));
 
+    /// <summary>
+    /// From a (possibly multi-segment) pooled buffer. The JSON DOM needs contiguous input, so a
+    /// multi-segment body is copied once into a pooled array (still off the large object heap
+    /// when it can be pooled). JSON is the slow path anyway: see docs/performance.
+    /// </summary>
+    public static ExportLogsServiceRequest ParseLogsRequest(System.Buffers.ReadOnlySequence<byte> utf8Json)
+    {
+        if (utf8Json.IsSingleSegment)
+        {
+            return ParseLogsRequest(utf8Json.FirstSpan);
+        }
+
+        var length = checked((int)utf8Json.Length);
+        var rented = System.Buffers.ArrayPool<byte>.Shared.Rent(length);
+        try
+        {
+            System.Buffers.BuffersExtensions.CopyTo(utf8Json, rented);
+            return ParseLogsRequest(rented.AsSpan(0, length));
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(rented);
+        }
+    }
+
     /// <exception cref="OtlpExportException">InvalidData (HTTP 400) if the body can't be decoded.</exception>
     public static ExportLogsServiceRequest ParseLogsRequest(ReadOnlySpan<byte> utf8Json)
     {

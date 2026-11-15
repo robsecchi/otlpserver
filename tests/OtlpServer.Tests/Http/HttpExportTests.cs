@@ -88,6 +88,28 @@ public sealed class HttpExportTests
         Assert.Empty(status.Details);
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)] // no Content-Length: blocks can't be reserved up front
+    [InlineData(false, true)] // gzip: decompressed into the pooled blocks
+    public async Task Body_spanning_many_pooled_blocks_is_decoded_completely(bool chunked, bool gzip)
+    {
+        // ~1 MB: several 128 KiB pooled blocks, decoded as a multi-segment sequence. The one
+        // bad record is LAST, so a body cut short or stitched wrongly would show up here.
+        var records = Enumerable.Range(0, 2000).Select(i => ValidRecord(new string('x', 400) + i))
+            .Append(RecordWithDuplicateKey())
+            .ToArray();
+        var bytes = WithRecords(records).ToByteArray();
+        await using var server = OtlpTestServer.Start();
+
+        using var response = await server.Http.PostLogsAsync(
+            OtlpHttpClientExtensions.ProtobufContent(gzip ? OtlpHttpClientExtensions.Gzip(bytes) : bytes, gzip ? "gzip" : null, chunked));
+
+        var body = await response.ReadExportResponseAsync();
+        Assert.Equal(1, body.PartialSuccess.RejectedLogRecords);
+        Assert.Contains("log_records[2000]", body.PartialSuccess.ErrorMessage);
+    }
+
     [Fact]
     public async Task Unknown_fields_are_ignored()
     {

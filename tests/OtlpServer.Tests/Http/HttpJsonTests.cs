@@ -191,6 +191,23 @@ public sealed class HttpJsonTests
     }
 
     [Fact]
+    public async Task Body_spanning_many_pooled_blocks_is_decoded_completely()
+    {
+        // ~1 MB of JSON: several 128 KiB pooled blocks, copied together for the JSON DOM. The
+        // one bad record is LAST, so a body cut short or stitched wrongly would show up here.
+        var records = Enumerable.Range(0, 2000).Select(i => $$"""{ "severityNumber": 9, "body": { "stringValue": "{{new string('x', 400)}}{{i}}" } }""")
+            .Append("""{ "severityNumber": 99 }""")
+            .ToArray();
+        await using var server = OtlpTestServer.Start();
+
+        using var response = await server.Http.PostLogsJsonAsync(Request(records));
+
+        var body = await response.ReadJsonExportResponseAsync();
+        Assert.Equal(1, body.PartialSuccess.RejectedLogRecords);
+        Assert.Contains("log_records[2000]", body.PartialSuccess.ErrorMessage);
+    }
+
+    [Fact]
     public async Task Gzip_json_is_accepted()
     {
         await using var server = OtlpTestServer.Start();

@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.IO;
 using OtlpServer.Logs.Failures;
 
 namespace OtlpServer.Transport.Http;
@@ -10,7 +11,7 @@ namespace OtlpServer.Transport.Http;
 /// now, JSON later) and every signal.
 ///
 /// <code>
-///  Request.Body ──► LimitedReadStream (wire limit) ──┬──────────────────────────────────────────► MemoryStream
+///  Request.Body ──► LimitedReadStream (wire limit) ──┬──────────────────────────────────────────► pooled buffer
 ///                                                    └─ gzip: GZipStream ──► LimitedReadStream ──┘
 ///                                                                            (decompressed limit)
 /// </code>
@@ -60,8 +61,13 @@ internal static class HttpRequestBodyReader
     /// <exception cref="OtlpExportException">
     /// TooLarge (413) over either limit; InvalidData (400) if the gzip data is corrupt.
     /// </exception>
-    public static async Task<MemoryStream> ReadAsync(
-        HttpContext http, ContentCoding coding, HttpTransportOptions options, ILogger logger, CancellationToken cancellationToken)
+    /// <returns>
+    /// The body, in POOLED memory: dispose it as soon as it has been decoded, which returns its
+    /// blocks to the pool. Read it with <c>GetReadOnlySequence()</c>: no copy.
+    /// </returns>
+    public static async Task<RecyclableMemoryStream> ReadAsync(
+        HttpContext http, ContentCoding coding, HttpTransportOptions options, RecyclableMemoryStreamManager buffers,
+        ILogger logger, CancellationToken cancellationToken)
     {
         var maxWire = options.MaxRequestBodySize;
 
@@ -81,8 +87,12 @@ internal static class HttpRequestBodyReader
         // Not disposed: it would dispose Request.Body, which belongs to the server.
         var wire = new LimitedReadStream(http.Request.Body, maxWire, _ => WireTooLarge(maxWire));
 
-        var body = new MemoryStream(
-            coding == ContentCoding.Identity && http.Request.ContentLength is { } length ? (int)length : 0);
+        // Pooled blocks instead of one growing array: a MemoryStream doubles (and copies) as it
+        // grows, and anything over 85 KB lands on the large object heap, which only gen-2 GCs
+        // clean up. The S2.1 load test measured the result on this path: 33% of time in GC and
+        // ~1,050 gen-2 GCs in 15 s. With a known Content-Length, the blocks are reserved up front.
+        var body = buffers.GetStream("otlp-http-body",
+            coding == ContentCoding.Identity && http.Request.ContentLength is { } length ? length : 0);
         try
         {
             if (coding == ContentCoding.Gzip)

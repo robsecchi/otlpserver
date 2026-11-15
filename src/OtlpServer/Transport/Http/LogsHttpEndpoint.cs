@@ -1,5 +1,7 @@
 using System.Buffers;
 using Microsoft.Extensions.Options;
+using Microsoft.IO;
+using OpenTelemetry.Proto.Collector.Logs.V1;
 using OtlpServer.Logs;
 using OtlpServer.Logs.Failures;
 
@@ -59,10 +61,17 @@ public static class LogsHttpEndpoint
         {
             // Read the whole body (decompressed, size-checked), then decode it.
             var options = http.RequestServices.GetRequiredService<IOptions<HttpTransportOptions>>().Value;
-            await using var body = await HttpRequestBodyReader.ReadAsync(http, coding, options, logger, cancellationToken);
-            var request = encoding == OtlpHttp.Encoding.Json
-                ? OtlpJsonCodec.ParseLogsRequest(body.GetBuffer().AsSpan(0, (int)body.Length))
-                : OtlpProtobufDecoder.ParseLogsRequest(new ReadOnlySequence<byte>(body.GetBuffer(), 0, (int)body.Length));
+            var buffers = http.RequestServices.GetRequiredService<RecyclableMemoryStreamManager>();
+            ExportLogsServiceRequest request;
+            await using (var body = await HttpRequestBodyReader.ReadAsync(http, coding, options, buffers, logger, cancellationToken))
+            {
+                // Decoded straight from the pooled blocks (no copy). The parsed message owns its
+                // own data, so the blocks go back to the pool right here, before validation.
+                var bytes = body.GetReadOnlySequence();
+                request = encoding == OtlpHttp.Encoding.Json
+                    ? OtlpJsonCodec.ParseLogsRequest(bytes)
+                    : OtlpProtobufDecoder.ParseLogsRequest(bytes);
+            }
 
             var response = await handler.ExportAsync(request, cancellationToken);
 

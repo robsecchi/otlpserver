@@ -68,3 +68,11 @@ run_scenario "" --transport grpc --batch 8192 --concurrency 8
 
 # Authentication overhead.
 run_scenario "$AUTH_ENV" --transport grpc --batch 512 --concurrency 32 --api-key "$API_KEY" --label "grpc/protobuf b512 c32, API key"
+
+# GC mode experiment. Default (from the Web SDK) = Server GC, which in .NET 9+ adapts its
+# number of heaps (DATAS). Compared with: Server GC with DATAS off (one heap per core, the old
+# behavior) and Workstation GC (one heap, collects much sooner).
+run_scenario "DOTNET_GCDynamicAdaptationMode=0" --transport grpc --batch 8192 --concurrency 8 --label "grpc/protobuf b8192 c8, Server GC without DATAS"
+run_scenario "DOTNET_gcServer=0" --transport grpc --batch 8192 --concurrency 8 --label "grpc/protobuf b8192 c8, Workstation GC"
+run_scenario "DOTNET_gcServer=0" --transport grpc --batch 512 --concurrency 32 --label "grpc/protobuf b512 c32, Workstation GC"
+run_scenario "DOTNET_gcServer=0" --transport http --encoding protobuf --batch 512 --concurrency 32 --label "http/protobuf b512 c32, Workstation GC"

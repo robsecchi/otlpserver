@@ -1,5 +1,6 @@
 using Grpc.AspNetCore.Server;
 using Microsoft.Extensions.Options;
+using Microsoft.IO;
 using OtlpServer.Admission;
 using OtlpServer.Logs;
 using OtlpServer.Logs.Validation;
@@ -61,6 +62,18 @@ builder.Services.AddOptions<HttpTransportOptions>()
     .Validate(o => o.EffectiveMaxDecompressedBodySize is > 0 and <= int.MaxValue,
         $"{HttpTransportOptions.SectionName}:MaxDecompressedBodySize must be between 1 and {int.MaxValue}")
     .ValidateOnStart();
+
+// Pooled buffers for OTLP/HTTP request bodies. Bodies are built from 128 KiB blocks taken
+// from a pool (each block is allocated once, then reused), instead of a fresh, growing array
+// per request. The pool keeps at most 128 MiB of FREE blocks for reuse; beyond that, returned
+// blocks are left to the GC, so idle memory stays bounded.
+builder.Services.AddSingleton(new RecyclableMemoryStreamManager(new RecyclableMemoryStreamManager.Options
+{
+    BlockSize = 128 * 1024,
+    LargeBufferMultiple = 1024 * 1024,
+    MaximumSmallPoolFreeBytes = 128 * 1024 * 1024,
+    MaximumLargePoolFreeBytes = 64 * 1024 * 1024,
+}));
 
 // TLS / mTLS settings and the startup security report (warns about plaintext endpoints).
 builder.AddOtlpSecurity();

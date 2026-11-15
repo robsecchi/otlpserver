@@ -26,6 +26,8 @@
     <PackageReference Include="Grpc.StatusProto" Version="2.64.0" />
     <!-- JWT bearer tokens from an OIDC provider / STS (e.g. Keycloak). -->
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.3" />
+    <!-- Pooled, LOH-free buffers for OTLP/HTTP request bodies. -->
+    <PackageReference Include="Microsoft.IO.RecyclableMemoryStream" Version="3.0.1" />
   </ItemGroup>
 
 </Project>
