@@ -19,6 +19,7 @@ namespace OtlpServer.Transport.Http;
 ///  Kind         HTTP                          body (google.rpc.Status)
 ///  -----------  ----------------------------  ---------------------------------
 ///  InvalidData  400 Bad Request               INVALID_ARGUMENT (+ BadRequest)
+///  TooLarge     413 Content Too Large         RESOURCE_EXHAUSTED (no RetryInfo)
 ///  Throttled    503 + Retry-After: seconds    UNAVAILABLE      (+ RetryInfo)
 ///  Internal     500 Internal Server Error     INTERNAL
 /// </code>
@@ -32,6 +33,7 @@ internal static class HttpExportFailureMapper
     public static int StatusCodeFor(ExportFailureKind kind) => kind switch
     {
         ExportFailureKind.InvalidData => StatusCodes.Status400BadRequest,
+        ExportFailureKind.TooLarge => StatusCodes.Status413PayloadTooLarge,
         ExportFailureKind.Throttled => StatusCodes.Status503ServiceUnavailable,
         ExportFailureKind.Internal => StatusCodes.Status500InternalServerError,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unmapped failure kind"),

@@ -14,9 +14,10 @@ namespace OtlpServer.Logs.Failures;
 /// </list>
 /// <para>Each transport adapter maps a kind to its own wire signal:</para>
 /// <code>
-///  Kind         Retryable  OTLP/gRPC status                   OTLP/HTTP (later)
+///  Kind         Retryable  OTLP/gRPC status                   OTLP/HTTP
 ///  -----------  ---------  ---------------------------------  ---------------------------------
 ///  InvalidData  no         INVALID_ARGUMENT + BadRequest      400 Bad Request
+///  TooLarge     no         RESOURCE_EXHAUSTED (no RetryInfo)  413 Content Too Large
 ///  Throttled    yes        UNAVAILABLE      + RetryInfo       503 Service Unavailable + Retry-After
 ///  Internal     no         INTERNAL                           500 Internal Server Error
 /// </code>
@@ -25,6 +26,13 @@ public enum ExportFailureKind
 {
     /// <summary>The request's data can't be accepted as sent (here: every record was rejected).</summary>
     InvalidData,
+
+    /// <summary>
+    /// The payload is over a size limit (on the wire, or once decompressed). Sending the same
+    /// payload again would fail the same way, so the client must drop it (and should send
+    /// smaller batches).
+    /// </summary>
+    TooLarge,
 
     /// <summary>
     /// Backpressure: the server can't keep up right now. The spec says the server SHOULD

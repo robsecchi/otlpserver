@@ -50,6 +50,8 @@ public static class ExportFailureStatus
     /// <summary>
     /// <list type="bullet">
     ///   <item>InvalidData → INVALID_ARGUMENT: non-retryable.</item>
+    ///   <item>TooLarge → RESOURCE_EXHAUSTED with NO RetryInfo: clients retry this code only
+    ///         when RetryInfo is present, so leaving it out makes it non-retryable.</item>
     ///   <item>Throttled → UNAVAILABLE: retryable. The spec says the server SHOULD use it for
     ///         throttling. RESOURCE_EXHAUSTED + RetryInfo would also be retryable, but
     ///         UNAVAILABLE is the recommended one.</item>
@@ -59,6 +61,7 @@ public static class ExportFailureStatus
     public static Code GrpcCodeFor(ExportFailureKind kind) => kind switch
     {
         ExportFailureKind.InvalidData => Code.InvalidArgument,
+        ExportFailureKind.TooLarge => Code.ResourceExhausted,
         ExportFailureKind.Throttled => Code.Unavailable,
         ExportFailureKind.Internal => Code.Internal,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unmapped failure kind"),

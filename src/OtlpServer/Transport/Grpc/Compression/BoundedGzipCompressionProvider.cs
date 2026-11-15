@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using Grpc.Core;
 using Grpc.Net.Compression;
+using OtlpServer.Logs.Failures;
 
 namespace OtlpServer.Transport.Grpc.Compression;
 
@@ -74,8 +75,9 @@ public sealed class BoundedGzipCompressionProvider : ICompressionProvider
             "Rejected gzip message: decompressed size exceeded {Limit} bytes (stopped after {BytesSoFar} bytes)",
             _maxDecompressedBytes, bytesSoFar);
 
-        return new RpcException(new global::Grpc.Core.Status(
-            StatusCode.ResourceExhausted,
+        // TooLarge → RESOURCE_EXHAUSTED without RetryInfo (non-retryable), the same failure
+        // kind OTLP/HTTP reports as 413.
+        return GrpcExportFailureMapper.ToRpcException(OtlpExportException.TooLarge(
             $"Decompressed message exceeds the maximum allowed size of {_maxDecompressedBytes} bytes. " +
             "Send smaller batches (e.g. lower the exporter's max batch size)."));
     }

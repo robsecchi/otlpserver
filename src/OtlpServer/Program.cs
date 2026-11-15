@@ -50,6 +50,16 @@ builder.Services.AddOptions<GrpcServiceOptions>()
         // empty or a short partial_success, so compressing them would only cost CPU.
     });
 
+// OTLP/HTTP transport. The body is buffered in one array, so the limits can't exceed what
+// an array can hold.
+builder.Services.AddOptions<HttpTransportOptions>()
+    .Bind(builder.Configuration.GetSection(HttpTransportOptions.SectionName))
+    .Validate(o => o.MaxRequestBodySize is > 0 and <= int.MaxValue,
+        $"{HttpTransportOptions.SectionName}:MaxRequestBodySize must be between 1 and {int.MaxValue}")
+    .Validate(o => o.EffectiveMaxDecompressedBodySize is > 0 and <= int.MaxValue,
+        $"{HttpTransportOptions.SectionName}:MaxDecompressedBodySize must be between 1 and {int.MaxValue}")
+    .ValidateOnStart();
+
 var app = builder.Build();
 
 // google.rpc.Status bodies for ASP.NET Core's own 404 / 405 on the HTTP port.

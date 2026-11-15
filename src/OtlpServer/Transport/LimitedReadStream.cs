@@ -1,4 +1,4 @@
-namespace OtlpServer.Transport.Grpc.Compression;
+namespace OtlpServer.Transport;
 
 /// <summary>
 /// Read-only wrapper that counts the bytes read through it and throws as soon as the total
@@ -18,8 +18,8 @@ namespace OtlpServer.Transport.Grpc.Compression;
 /// <c>limit + one read buffer</c> has been produced when the exception is thrown.
 /// </para>
 /// <para>
-/// Nothing here depends on gRPC; the caller decides which exception to throw. The class can
-/// be moved to a shared place when OTLP/HTTP needs it.
+/// Nothing here depends on a transport; the caller decides which exception to throw. Used by
+/// OTLP/gRPC (decompressed size) and OTLP/HTTP (wire size and decompressed size).
 /// </para>
 /// </summary>
 public sealed class LimitedReadStream : Stream

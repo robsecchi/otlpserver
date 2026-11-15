@@ -34,6 +34,9 @@ public sealed class OtlpExportException : Exception
     public static OtlpExportException InvalidData(string message, IReadOnlyList<ExportFieldViolation> violations) =>
         new(ExportFailureKind.InvalidData, message, violations: violations);
 
+    public static OtlpExportException TooLarge(string message) =>
+        new(ExportFailureKind.TooLarge, message);
+
     public static OtlpExportException Throttled(string message, TimeSpan retryAfter) =>
         new(ExportFailureKind.Throttled, message, retryAfter: retryAfter);
 

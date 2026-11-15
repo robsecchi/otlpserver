@@ -1,4 +1,4 @@
-using OtlpServer.Transport.Grpc.Compression;
+using OtlpServer.Transport;
 
 namespace OtlpServer.Tests.Unit;
 

@@ -1,4 +1,5 @@
 using System.Buffers;
+using Microsoft.Extensions.Options;
 using Microsoft.Net.Http.Headers;
 using OtlpServer.Logs;
 using OtlpServer.Logs.Failures;
@@ -12,7 +13,9 @@ namespace OtlpServer.Transport.Http;
 /// <para>How each result is reported over HTTP:</para>
 /// <code>
 ///  Content-Type not application/x-protobuf ──► 415 (JSON comes in a later step)
-///  body isn't a valid protobuf message    ──► 400 (InvalidData)
+///  Content-Encoding not gzip / identity   ──► 415
+///  body over a size limit (wire or gzip)  ──► 413 (TooLarge)
+///  corrupt gzip, or invalid protobuf      ──► 400 (InvalidData)
 ///  handler returns a response             ──► 200 + ExportLogsServiceResponse (maybe with partial_success)
 ///  handler throws OtlpExportException     ──► 400 / 503 + Retry-After / 500 (HttpExportFailureMapper)
 ///  client disconnected                    ──► nothing (no one is there to read it)
@@ -44,12 +47,18 @@ public static class LogsHttpEndpoint
             return;
         }
 
+        if (!HttpRequestBodyReader.TryGetContentCoding(http.Request, out var coding, out unsupportedMessage))
+        {
+            await OtlpHttp.WriteMessageAsync(http.Response, StatusCodes.Status415UnsupportedMediaType,
+                new Google.Rpc.Status { Code = (int)Google.Rpc.Code.Unimplemented, Message = unsupportedMessage });
+            return;
+        }
+
         try
         {
-            // Read the whole body, then decode. No size limit of our own yet (next step);
-            // Kestrel's MaxRequestBodySize (30 MB by default) answers 413 beyond that.
-            using var body = new MemoryStream();
-            await http.Request.Body.CopyToAsync(body, cancellationToken);
+            // Read the whole body (decompressed, size-checked), then decode it.
+            var options = http.RequestServices.GetRequiredService<IOptions<HttpTransportOptions>>().Value;
+            await using var body = await HttpRequestBodyReader.ReadAsync(http, coding, options, logger, cancellationToken);
             var request = OtlpProtobufDecoder.ParseLogsRequest(
                 new ReadOnlySequence<byte>(body.GetBuffer(), 0, (int)body.Length));
 
@@ -68,8 +77,8 @@ public static class LogsHttpEndpoint
         }
         catch (Exception ex) when (ex is not BadHttpRequestException)
         {
-            // BadHttpRequestException (e.g. body over Kestrel's limit) is left to Kestrel,
-            // which answers with the status code it carries (413).
+            // BadHttpRequestException (a malformed HTTP request, e.g. broken chunked framing)
+            // is left to Kestrel, which answers with the status code it carries.
             // Anything else is a bug: log it, never send its details to the client.
             logger.LogError(ex, "Unexpected error while processing OTLP/HTTP logs export");
             await HttpExportFailureMapper.WriteAsync(http.Response,
