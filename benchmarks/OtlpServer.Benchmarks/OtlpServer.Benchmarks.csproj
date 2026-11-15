@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Micro-benchmarks of the server hot path. Run from the repo root: dotnet run -c Release (project: benchmarks/OtlpServer.Benchmarks) -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" Version="0.14.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\OtlpServer\OtlpServer.csproj" />
+    <!-- Same realistic payloads as the load generator. -->
+    <Compile Include="..\..\tools\OtlpLoadGen\Payloads.cs" Link="Payloads.cs" />
+  </ItemGroup>
+
+</Project>
