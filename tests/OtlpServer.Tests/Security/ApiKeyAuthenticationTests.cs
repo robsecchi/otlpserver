@@ -137,7 +137,7 @@ public sealed class ApiKeyAuthenticationTests
     {
         var gate = new GatedValidator();
         var settings = ApiKeys.Enabled();
-        settings["Otlp:Logs:MaxConcurrentExports"] = "1";
+        settings["Otlp:Admission:MaxConcurrentExports"] = "1";
         await using var server = OtlpTestServer.Start(settings, s => s.AddSingleton<ILogRecordValidator>(gate));
 
         // An authenticated export holds the only slot...

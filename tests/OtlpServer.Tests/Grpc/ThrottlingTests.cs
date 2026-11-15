@@ -25,8 +25,8 @@ public sealed class ThrottlingTests
 {
     private static readonly Dictionary<string, string?> OneSlot = new()
     {
-        ["Otlp:Logs:MaxConcurrentExports"] = "1",
-        ["Otlp:Logs:ThrottleRetryDelay"] = "00:00:03",
+        ["Otlp:Admission:MaxConcurrentExports"] = "1",
+        ["Otlp:Admission:RetryDelay"] = "00:00:03",
     };
 
     [Fact]

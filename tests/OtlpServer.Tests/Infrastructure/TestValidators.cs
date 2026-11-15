@@ -7,20 +7,31 @@ using OtlpServer.Logs.Validation;
 namespace OtlpServer.Tests.Infrastructure;
 
 /// <summary>
-/// Blocks every Validate call until <see cref="Release"/> is set, so a test can hold an
-/// export inside the server (i.e. keep a concurrency slot taken) for as long as it needs.
+/// Blocks Validate calls until <see cref="Release"/> is set, so a test can hold exports inside
+/// the server (i.e. keep admission slots taken) for as long as it needs.
 /// </summary>
-public sealed class GatedValidator : ILogRecordValidator
+/// <param name="blockFirst">How many exports to hold (one record each); later ones pass straight through. Default: all.</param>
+public sealed class GatedValidator(int blockFirst = int.MaxValue) : ILogRecordValidator
 {
     private readonly LogRecordValidator _inner = new(Options.Create(new LogValidationOptions()));
+    private int _calls;
 
+    /// <summary>Set when the first held export has reached validation.</summary>
     public ManualResetEventSlim Entered { get; } = new();
+
+    /// <summary>Signalled once per held export that has reached validation.</summary>
+    public SemaphoreSlim EnteredEach { get; } = new(0);
+
     public ManualResetEventSlim Release { get; } = new();
 
     public IReadOnlyList<LogRecordIssue> Validate(LogRecord record)
     {
-        Entered.Set();
-        Release.Wait(TimeSpan.FromSeconds(10));
+        if (Interlocked.Increment(ref _calls) <= blockFirst)
+        {
+            Entered.Set();
+            EnteredEach.Release();
+            Release.Wait(TimeSpan.FromSeconds(10));
+        }
         return _inner.Validate(record);
     }
 

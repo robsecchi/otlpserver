@@ -6,6 +6,8 @@ using System.Security.Cryptography.X509Certificates;
 using Grpc.Net.Client;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using OpenTelemetry.Proto.Collector.Logs.V1;
 
@@ -38,7 +40,9 @@ public sealed class KestrelOtlpServer : IAsyncDisposable
 
     /// <param name="tls">null = plaintext; otherwise both endpoints use https with this server certificate.</param>
     /// <param name="settings">Extra configuration (e.g. Otlp:Security:*).</param>
-    public static KestrelOtlpServer Start(TestCertificates? tls, IDictionary<string, string?>? settings = null)
+    /// <param name="services">Replaces registrations (runs after Program.cs registered its own).</param>
+    public static KestrelOtlpServer Start(
+        TestCertificates? tls, IDictionary<string, string?>? settings = null, Action<IServiceCollection>? services = null)
     {
         var scheme = tls is null ? "http" : "https";
         var grpc = new Uri($"{scheme}://127.0.0.1:{FreePort()}");
@@ -67,6 +71,7 @@ public sealed class KestrelOtlpServer : IAsyncDisposable
         {
             foreach (var (key, value) in config) builder.UseSetting(key, value);
             builder.ConfigureLogging(logging => logging.AddProvider(new CapturingLoggerProvider(logs)));
+            if (services is not null) builder.ConfigureTestServices(services);
         });
         factory.UseKestrel();
         factory.StartServer(); // throws if startup fails (e.g. RequireSecure, bad CA file)

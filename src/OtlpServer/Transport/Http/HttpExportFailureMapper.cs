@@ -21,11 +21,12 @@ namespace OtlpServer.Transport.Http;
 ///  InvalidData  400 Bad Request               INVALID_ARGUMENT (+ BadRequest)
 ///  TooLarge     413 Content Too Large         RESOURCE_EXHAUSTED (no RetryInfo)
 ///  Throttled    503 + Retry-After: seconds    UNAVAILABLE      (+ RetryInfo)
+///  QuotaExceeded 429 + Retry-After: seconds   RESOURCE_EXHAUSTED (+ RetryInfo)
 ///  Internal     500 Internal Server Error     INTERNAL
 /// </code>
 /// <para>
-/// Throttling could also be 429. The spec allows both; 503 says "the server is overloaded",
-/// which is what our limit means. 429 fits better for a per-client quota.
+/// Both 503 and 429 are retryable and the spec allows either for throttling. We use 503 for
+/// "the server is overloaded" and 429 for "this client is over its own share".
 /// </para>
 /// </summary>
 internal static class HttpExportFailureMapper
@@ -35,13 +36,14 @@ internal static class HttpExportFailureMapper
         ExportFailureKind.InvalidData => StatusCodes.Status400BadRequest,
         ExportFailureKind.TooLarge => StatusCodes.Status413PayloadTooLarge,
         ExportFailureKind.Throttled => StatusCodes.Status503ServiceUnavailable,
+        ExportFailureKind.QuotaExceeded => StatusCodes.Status429TooManyRequests,
         ExportFailureKind.Internal => StatusCodes.Status500InternalServerError,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unmapped failure kind"),
     };
 
     public static Task WriteAsync(HttpResponse response, OtlpExportException failure, OtlpHttp.Encoding encoding)
     {
-        if (failure is { Kind: ExportFailureKind.Throttled, RetryAfter: { } delay })
+        if (failure.RetryAfter is { } delay)
         {
             // Retry-After takes whole seconds. Round UP, so the client never comes back
             // earlier than the server asked.

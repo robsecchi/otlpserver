@@ -36,7 +36,7 @@ public static class ExportFailureStatus
 
             // gRPC clients wait retry_delay instead of their own backoff. HTTP clients use the
             // Retry-After header instead; keeping RetryInfo in the body costs nothing.
-            case ExportFailureKind.Throttled:
+            case ExportFailureKind.Throttled or ExportFailureKind.QuotaExceeded:
                 status.Details.Add(Any.Pack(new RetryInfo
                 {
                     RetryDelay = Duration.FromTimeSpan(failure.RetryAfter ?? TimeSpan.FromSeconds(1)),
@@ -63,6 +63,8 @@ public static class ExportFailureStatus
         ExportFailureKind.InvalidData => Code.InvalidArgument,
         ExportFailureKind.TooLarge => Code.ResourceExhausted,
         ExportFailureKind.Throttled => Code.Unavailable,
+        // Per-client quota: RESOURCE_EXHAUSTED is retryable here BECAUSE RetryInfo is attached.
+        ExportFailureKind.QuotaExceeded => Code.ResourceExhausted,
         ExportFailureKind.Internal => Code.Internal,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unmapped failure kind"),
     };

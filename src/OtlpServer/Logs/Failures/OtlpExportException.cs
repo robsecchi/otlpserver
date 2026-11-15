@@ -22,10 +22,10 @@ public sealed class OtlpExportException : Exception
 
     public ExportFailureKind Kind { get; }
 
-    /// <summary>Only <see cref="ExportFailureKind.Throttled"/> tells the client it may retry.</summary>
-    public bool IsRetryable => Kind == ExportFailureKind.Throttled;
+    /// <summary>Only Throttled and QuotaExceeded tell the client it may retry.</summary>
+    public bool IsRetryable => Kind is ExportFailureKind.Throttled or ExportFailureKind.QuotaExceeded;
 
-    /// <summary>For throttling: how long the client should wait before retrying (gRPC RetryInfo / HTTP Retry-After).</summary>
+    /// <summary>For Throttled / QuotaExceeded: how long the client should wait before retrying (gRPC RetryInfo / HTTP Retry-After).</summary>
     public TimeSpan? RetryAfter { get; }
 
     /// <summary>For invalid data: which parts of the request were wrong.</summary>
@@ -39,6 +39,9 @@ public sealed class OtlpExportException : Exception
 
     public static OtlpExportException Throttled(string message, TimeSpan retryAfter) =>
         new(ExportFailureKind.Throttled, message, retryAfter: retryAfter);
+
+    public static OtlpExportException QuotaExceeded(string message, TimeSpan retryAfter) =>
+        new(ExportFailureKind.QuotaExceeded, message, retryAfter: retryAfter);
 
     public static OtlpExportException Internal(string message, Exception? inner = null) =>
         new(ExportFailureKind.Internal, message, inner: inner);

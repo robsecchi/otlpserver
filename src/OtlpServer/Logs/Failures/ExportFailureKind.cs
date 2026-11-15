@@ -19,6 +19,7 @@ namespace OtlpServer.Logs.Failures;
 ///  InvalidData  no         INVALID_ARGUMENT + BadRequest      400 Bad Request
 ///  TooLarge     no         RESOURCE_EXHAUSTED (no RetryInfo)  413 Content Too Large
 ///  Throttled    yes        UNAVAILABLE      + RetryInfo       503 Service Unavailable + Retry-After
+///  QuotaExceeded yes       RESOURCE_EXHAUSTED + RetryInfo     429 Too Many Requests + Retry-After
 ///  Internal     no         INTERNAL                           500 Internal Server Error
 /// </code>
 /// </summary>
@@ -40,6 +41,13 @@ public enum ExportFailureKind
     /// RetryInfo).
     /// </summary>
     Throttled,
+
+    /// <summary>
+    /// Per-client backpressure: THIS client is over its own share, while the server may have
+    /// room for others. Retryable after the given delay. A different signal from Throttled
+    /// ("the server is busy"), so clients and dashboards can tell the two apart.
+    /// </summary>
+    QuotaExceeded,
 
     /// <summary>
     /// Unexpected server-side bug. We treat it as non-retryable: if the same input always

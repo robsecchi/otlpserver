@@ -15,9 +15,9 @@ public sealed class HttpThrottlingTests
 {
     private static readonly Dictionary<string, string?> OneSlot = new()
     {
-        ["Otlp:Logs:MaxConcurrentExports"] = "1",
+        ["Otlp:Admission:MaxConcurrentExports"] = "1",
         // Not a whole number of seconds, to check the header rounds UP.
-        ["Otlp:Logs:ThrottleRetryDelay"] = "00:00:02.500",
+        ["Otlp:Admission:RetryDelay"] = "00:00:02.500",
     };
 
     [Fact]

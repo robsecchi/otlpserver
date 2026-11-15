@@ -246,7 +246,7 @@ public sealed class HttpJsonTests
     {
         var gate = new GatedValidator();
         await using var server = OtlpTestServer.Start(
-            new Dictionary<string, string?> { ["Otlp:Logs:MaxConcurrentExports"] = "1" },
+            new Dictionary<string, string?> { ["Otlp:Admission:MaxConcurrentExports"] = "1" },
             s => s.AddSingleton<ILogRecordValidator>(gate));
 
         var first = server.Http.PostLogsJsonAsync(Request(ValidRecordJson));

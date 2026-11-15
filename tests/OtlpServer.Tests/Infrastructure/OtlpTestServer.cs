@@ -44,6 +44,9 @@ public sealed class OtlpTestServer : IAsyncDisposable
     /// <summary>Plain HTTP client for OTLP/HTTP (same in-memory server, same singletons).</summary>
     public HttpClient Http { get; }
 
+    /// <summary>The app's services (e.g. to read admission counters).</summary>
+    public IServiceProvider Services => _factory.Services;
+
     /// <summary>Everything the app logged.</summary>
     public ConcurrentQueue<(LogLevel Level, string Message)> Logs { get; }
 
@@ -57,7 +60,7 @@ public sealed class OtlpTestServer : IAsyncDisposable
     public Task<byte[]> ExportRawAsync(byte[] payload) =>
         _channel.CreateCallInvoker().AsyncUnaryCall(RawExportMethod, null, new CallOptions(), payload).ResponseAsync;
 
-    /// <param name="settings">Configuration overrides, e.g. { "Otlp:Logs:MaxConcurrentExports", "1" }.</param>
+    /// <param name="settings">Configuration overrides, e.g. { "Otlp:Admission:MaxConcurrentExports", "1" }.</param>
     /// <param name="services">Replaces registrations (runs after Program.cs registered its own).</param>
     /// <param name="clientCompressionProviders">Compression algorithms the CLIENT can use (default: gzip only).</param>
     public static OtlpTestServer Start(

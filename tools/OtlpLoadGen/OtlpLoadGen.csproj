@@ -15,6 +15,9 @@
 
   <ItemGroup>
     <PackageReference Include="Grpc.Net.Client" Version="2.64.0" />
+    <!-- Reads the server process's GC counters over EventPipe (like dotnet-counters). -->
+    <PackageReference Include="Microsoft.Diagnostics.NETCore.Client" Version="0.2.510501" />
+    <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="3.1.10" />
   </ItemGroup>
 
   <ItemGroup>

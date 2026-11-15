@@ -7,6 +7,8 @@
 #   DURATION=30 tools/loadtest.sh     # longer runs
 #
 # The server is restarted for every scenario, so each peak-memory number is its own.
+# Refused exports are retried after the server's retry delay, like real OTel exporters, except
+# in the scenario marked "NO backoff". GC columns come from the server's runtime counters.
 # Both server and load generator run on THIS machine: they compete for the same CPU cores,
 # so absolute numbers are a lower bound of what a dedicated server would do.
 # -----------------------------------------------------------------------------------------------
@@ -40,8 +42,8 @@ run_scenario() {
 AUTH_ENV="Otlp__Security__Authentication__Mode=ApiKey Otlp__Security__Authentication__Clients__0__Name=loadtest Otlp__Security__Authentication__Clients__0__KeyHashes__0=$API_KEY_HASH"
 QUIET_ENV="Logging__LogLevel__OtlpServer=Warning"
 
-echo "| scenario | exports/s | records/s | wire MB/s | p50 ms | p95 ms | p99 ms | errors | server cores | server peak RSS MB | loadgen cores |"
-echo "|---|---|---|---|---|---|---|---|---|---|---|"
+echo "| scenario | exports/s | records/s | wire MB/s | p50 ms | p95 ms | p99 ms | errors | server cores | server peak RSS MB | GC heap peak MB | GC committed peak MB | % time in GC | KB alloc/export | gen-2 GCs | loadgen cores |"
+echo "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
 
 # gRPC protobuf, batch 512: scaling the number of concurrent exports (one HTTP/2 connection).
 run_scenario "" --transport grpc --batch 512 --concurrency 1
@@ -49,6 +51,8 @@ run_scenario "" --transport grpc --batch 512 --concurrency 8
 run_scenario "" --transport grpc --batch 512 --concurrency 32
 run_scenario "" --transport grpc --batch 512 --concurrency 64
 run_scenario "" --transport grpc --batch 512 --concurrency 128 --label "grpc/protobuf b512 c128 (over limit)"
+# Worst case: a client that ignores the retry delay and retries at once (a retry storm).
+run_scenario "" --transport grpc --batch 512 --concurrency 128 --no-backoff --label "grpc/protobuf b512 c128, NO backoff (retry storm)"
 
 # Same load, per-export Information log line silenced: what does that log line cost?
 run_scenario "$QUIET_ENV" --transport grpc --batch 512 --concurrency 32 --label "grpc/protobuf b512 c32, quiet logs"

@@ -1,5 +1,6 @@
 using Grpc.AspNetCore.Server;
 using Microsoft.Extensions.Options;
+using OtlpServer.Admission;
 using OtlpServer.Logs;
 using OtlpServer.Logs.Validation;
 using OtlpServer.Security;
@@ -64,6 +65,9 @@ builder.Services.AddOptions<HttpTransportOptions>()
 // TLS / mTLS settings and the startup security report (warns about plaintext endpoints).
 builder.AddOtlpSecurity();
 
+// Admission (backpressure): how many exports may be in progress, server-wide and per client.
+builder.AddOtlpAdmission();
+
 var app = builder.Build();
 
 // google.rpc.Status bodies for ASP.NET Core's own 404 / 405 on the HTTP port.
@@ -72,14 +76,18 @@ app.UseOtlpHttpErrorBodies();
 // Authentication runs here: before any OTLP endpoint reads a body or takes a concurrency slot.
 app.UseOtlpSecurity();
 
+// Admission: an export takes its slot here, before its body is read, and keeps it until the
+// response. Needs the authenticated client (per-client cap), so it comes after security.
+app.UseOtlpAdmission();
+
 // OTLP/gRPC: opentelemetry.proto.collector.logs.v1.LogsService/Export (port 4317).
-app.MapGrpcService<LogsGrpcService>().RequireOtlpAuthentication(app);
+app.MapGrpcService<LogsGrpcService>().RequireOtlpAuthentication(app).WithOtlpAdmission();
 
 // OTLP/HTTP: POST /v1/logs (port 4318). Same ILogsExportHandler as gRPC.
 // Endpoints aren't restricted to a port: each port only speaks its own protocol version
 // (4317 is HTTP/2-only, which HTTP/1.1 exporters can't use; 4318 serves HTTP/1.1 in
 // plaintext, and negotiates HTTP/1.1 or HTTP/2 with TLS), so in practice clients reach the right one.
-app.MapOtlpHttpLogs().RequireOtlpAuthentication(app);
+app.MapOtlpHttpLogs().RequireOtlpAuthentication(app).WithOtlpAdmission();
 
 app.Run();
 

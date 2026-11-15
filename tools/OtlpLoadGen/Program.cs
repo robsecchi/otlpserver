@@ -14,7 +14,7 @@ using OtlpLoadGen;
 //
 //   dotnet run -c Release --project tools/OtlpLoadGen -- \
 //     --transport grpc|http  --encoding protobuf|json  [--gzip]  --batch 512  --resources 8 \
-//     --concurrency 32  --connections 1  --duration 20  --warmup 5 \
+//     --concurrency 32  --connections 1  --duration 20  --warmup 5  --timeout 10  [--no-backoff] \
 //     [--target URL]  [--server-pid PID]  [--api-key KEY]  [--label NAME]  [--row]
 //
 // Each worker sends one export, waits for the answer, sends the next (closed loop), like an
@@ -29,9 +29,12 @@ var protobuf = request.ToByteArray();
 var body = o.Encoding == "json" ? Encoding.UTF8.GetBytes(ToOtlpJson(request)) : protobuf;
 if (o.Gzip && o.Transport == "http") body = Gzip(body);
 
-Func<Task<string>> send = o.Transport == "grpc" ? GrpcSender(o, protobuf) : HttpSender(o, body);
+Func<Task<Outcome>> send = o.Transport == "grpc" ? GrpcSender(o, protobuf) : HttpSender(o, body);
 
 // Closed-loop workers. Only the measurement window (after the warmup) is recorded.
+// When refused with a retry delay (gRPC RetryInfo / HTTP Retry-After), a worker waits that long
+// before its next export, as real OTel exporters do. --no-backoff retries at once instead: the
+// worst case, a client that ignores backoff (a retry storm).
 var stats = Enumerable.Range(0, o.Concurrency).Select(_ => new WorkerStats()).ToArray();
 var measuring = false;
 var stop = false;
@@ -40,15 +43,17 @@ var workers = stats.Select(s => Task.Run(async () =>
     while (!Volatile.Read(ref stop))
     {
         var start = Stopwatch.GetTimestamp();
-        string outcome;
+        Outcome outcome;
         try { outcome = await send(); }
-        catch (Exception ex) { outcome = ex.GetType().Name; }
-        if (Volatile.Read(ref measuring)) s.Record(outcome, Stopwatch.GetElapsedTime(start));
+        catch (Exception ex) { outcome = new(ex.GetType().Name, null); }
+        if (Volatile.Read(ref measuring)) s.Record(outcome.Name, Stopwatch.GetElapsedTime(start));
+        if (!o.NoBackoff && outcome.RetryAfter is { } delay && !Volatile.Read(ref stop)) await Task.Delay(delay);
     }
 })).ToArray();
 
 var server = o.ServerPid is { } pid ? Process.GetProcessById(pid) : null;
 var self = Process.GetCurrentProcess();
+using var gc = server is null ? null : GcSampler.TryStart(server.Id);
 
 await Task.Delay(TimeSpan.FromSeconds(o.Warmup));
 server?.Refresh();
@@ -57,6 +62,7 @@ var serverCpu0 = server?.TotalProcessorTime ?? TimeSpan.Zero;
 var selfCpu0 = self.TotalProcessorTime;
 var wall = Stopwatch.StartNew();
 Volatile.Write(ref measuring, true);
+gc?.StartMeasuring();
 
 long peakRss = 0;
 while (wall.Elapsed < TimeSpan.FromSeconds(o.Duration))
@@ -68,6 +74,7 @@ while (wall.Elapsed < TimeSpan.FromSeconds(o.Duration))
 }
 
 Volatile.Write(ref measuring, false);
+gc?.StopMeasuring();
 var seconds = wall.Elapsed.TotalSeconds;
 server?.Refresh();
 self.Refresh();
@@ -85,12 +92,15 @@ double P(double q) => latencies.Length == 0 ? double.NaN : latencies[Math.Min(la
 var errors = string.Join(" ", outcomes.Where(kv => kv.Key != "OK").OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Key}:{kv.Value}"));
 var label = o.Label ?? $"{o.Transport}/{o.Encoding}{(o.Gzip ? "+gzip" : "")} b{o.Batch} c{o.Concurrency}";
 var ci = CultureInfo.InvariantCulture;
+var allocPerExport = gc is null || ok == 0 ? double.NaN : gc.AllocatedBytes / ok / 1e3; // KB per successful export
 
 if (o.Row)
 {
     Console.WriteLine(string.Create(ci,
         $"| {label} | {ok / seconds:N0} | {ok * (double)o.Batch / seconds:N0} | {ok * (double)body.Length / seconds / 1e6:N1} | " +
-        $"{P(0.50):N1} | {P(0.95):N1} | {P(0.99):N1} | {(errors == "" ? "-" : errors)} | {serverCores:N2} | {peakRss / 1e6:N0} | {selfCores:N2} |"));
+        $"{P(0.50):N1} | {P(0.95):N1} | {P(0.99):N1} | {(errors == "" ? "-" : errors)} | {serverCores:N2} | {peakRss / 1e6:N0} | " +
+        $"{gc?.PeakHeapMb ?? double.NaN:N0} | {gc?.PeakCommittedMb ?? double.NaN:N0} | {gc?.MeanTimeInGcPercent ?? double.NaN:N1} | " +
+        $"{allocPerExport:N0} | {gc?.Gen2Collections ?? double.NaN:N0} | {selfCores:N2} |"));
 }
 else
 {
@@ -101,13 +111,14 @@ else
           throughput:   {ok / seconds:N0} exports/s, {ok * (double)o.Batch / seconds:N0} records/s, {ok * (double)body.Length / seconds / 1e6:N1} MB/s
           latency ms:   p50 {P(0.50):N1}  p95 {P(0.95):N1}  p99 {P(0.99):N1}  max {(latencies.Length > 0 ? latencies[^1].TotalMilliseconds : double.NaN):N1}
           server:       {serverCores:N2} cores, peak RSS {peakRss / 1e6:N0} MB
+          server GC:    peak heap {gc?.PeakHeapMb ?? double.NaN:N0} MB, peak committed {gc?.PeakCommittedMb ?? double.NaN:N0} MB, {gc?.MeanTimeInGcPercent ?? double.NaN:N1}% time in GC, {allocPerExport:N0} KB allocated per export, {gc?.Gen2Collections ?? double.NaN:N0} gen-2 GCs
           load gen:     {selfCores:N2} cores
         """));
 }
 
 // ---- Senders --------------------------------------------------------------------------------
 
-static Func<Task<string>> GrpcSender(LoadOptions o, byte[] protobuf)
+static Func<Task<Outcome>> GrpcSender(LoadOptions o, byte[] protobuf)
 {
     var bytes = Marshallers.Create<byte[]>(b => b, b => b);
     var method = new Method<byte[], byte[]>(MethodType.Unary, LogsService.Descriptor.FullName, "Export", bytes, bytes);
@@ -130,21 +141,25 @@ static Func<Task<string>> GrpcSender(LoadOptions o, byte[] protobuf)
         var invoker = invokers[(int)((uint)Interlocked.Increment(ref next) % invokers.Length)];
         try
         {
-            await invoker.AsyncUnaryCall(method, null, new CallOptions(headers), protobuf).ResponseAsync;
-            return "OK";
+            await invoker.AsyncUnaryCall(method, null,
+                new CallOptions(headers, deadline: DateTime.UtcNow.AddSeconds(o.Timeout)), protobuf).ResponseAsync;
+            return new("OK", null);
         }
         catch (RpcException ex)
         {
-            return ex.StatusCode.ToString();
+            // RetryInfo, in grpc-status-details-bin: what OTel exporters honor.
+            var delay = ex.GetRpcStatus()?.GetDetail<Google.Rpc.RetryInfo>()?.RetryDelay?.ToTimeSpan();
+            return new(ex.StatusCode.ToString(), delay);
         }
     };
 }
 
-static Func<Task<string>> HttpSender(LoadOptions o, byte[] body)
+static Func<Task<Outcome>> HttpSender(LoadOptions o, byte[] body)
 {
     var http = new HttpClient(new SocketsHttpHandler { MaxConnectionsPerServer = o.Concurrency })
     {
         BaseAddress = new Uri(o.Target ?? "http://localhost:4318"),
+        Timeout = TimeSpan.FromSeconds(o.Timeout),
     };
     var contentType = o.Encoding == "json" ? "application/json" : "application/x-protobuf";
 
@@ -158,7 +173,9 @@ static Func<Task<string>> HttpSender(LoadOptions o, byte[] body)
 
         using var response = await http.SendAsync(message);
         await response.Content.LoadIntoBufferAsync();
-        return response.IsSuccessStatusCode ? "OK" : ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture);
+        return response.IsSuccessStatusCode
+            ? new("OK", null)
+            : new(((int)response.StatusCode).ToString(CultureInfo.InvariantCulture), response.Headers.RetryAfter?.Delta);
     };
 }
 
@@ -189,6 +206,8 @@ static byte[] Gzip(byte[] data)
 
 // ---- Types --------------------------------------------------------------------------------------
 
+readonly record struct Outcome(string Name, TimeSpan? RetryAfter);
+
 sealed class WorkerStats
 {
     public List<TimeSpan> Latencies { get; } = new(100_000);
@@ -203,7 +222,7 @@ sealed class WorkerStats
 
 sealed record LoadOptions(
     string Transport, string Encoding, bool Gzip, int Batch, int Resources, int Concurrency, int Connections,
-    int Duration, int Warmup, string? Target, int? ServerPid, string? ApiKey, string? Label, bool Row)
+    int Duration, int Warmup, int Timeout, bool NoBackoff, string? Target, int? ServerPid, string? ApiKey, string? Label, bool Row)
 {
     public static LoadOptions Parse(string[] args)
     {
@@ -220,6 +239,8 @@ sealed record LoadOptions(
             Connections: GetInt("--connections", 1),
             Duration: GetInt("--duration", 20),
             Warmup: GetInt("--warmup", 5),
+            Timeout: GetInt("--timeout", 10), // per export, like an exporter's timeout (OTLP default: 10 s)
+            NoBackoff: args.Contains("--no-backoff"),
             Target: Get("--target"),
             ServerPid: Get("--server-pid") is { } p ? int.Parse(p, CultureInfo.InvariantCulture) : null,
             ApiKey: Get("--api-key"),
