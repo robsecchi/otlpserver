@@ -1,4 +1,5 @@
 using Google.Protobuf;
+using Microsoft.Extensions.Options;
 using OpenTelemetry.Proto.Logs.V1;
 using OtlpServer.Logs.Validation;
 using OtlpServer.Tests.Infrastructure;
@@ -8,7 +9,7 @@ namespace OtlpServer.Tests.Unit;
 /// <summary>One test per rule in LogRecordValidator, each tied to the Log Data Model.</summary>
 public sealed class LogRecordValidatorTests
 {
-    private readonly LogRecordValidator _validator = new();
+    private readonly LogRecordValidator _validator = new(Options.Create(new LogValidationOptions()));
 
     private static ByteString Bytes(int length, byte fill = 0xAB) =>
         ByteString.CopyFrom(Enumerable.Repeat(fill, length).ToArray());

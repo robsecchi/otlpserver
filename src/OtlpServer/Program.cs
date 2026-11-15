@@ -9,6 +9,13 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Core (transport-agnostic) services.
 builder.Services.Configure<LogsExportOptions>(builder.Configuration.GetSection(LogsExportOptions.SectionName));
+builder.Services.AddOptions<LogValidationOptions>()
+    .Bind(builder.Configuration.GetSection(LogValidationOptions.SectionName))
+    // The binder accepts any number for an enum (e.g. "7"), so check the value is a real one.
+    .Validate(o => Enum.IsDefined(o.DuplicateAttributeKeys),
+        $"{LogValidationOptions.SectionName}:{nameof(LogValidationOptions.DuplicateAttributeKeys)} must be one of: " +
+        string.Join(", ", Enum.GetNames<DuplicateAttributeKeyHandling>()))
+    .ValidateOnStart();
 builder.Services.AddSingleton<ILogRecordValidator, LogRecordValidator>();
 builder.Services.AddSingleton<ILogsExportHandler, LogsExportHandler>();
 

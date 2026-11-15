@@ -45,7 +45,7 @@ public sealed class LogsExportOutcome
 
     public void RecordAccepted() => AcceptedLogRecords++;
 
-    public void RecordRejected() => RejectedLogRecords++;
+    public void RecordsRejected(long count) => RejectedLogRecords += count;
 
     /// <param name="location">Where the record sits in the request, e.g. "resource_logs[0].scope_logs[1].log_records[7]".</param>
     public void AddIssue(LogRecordIssue issue, string location)

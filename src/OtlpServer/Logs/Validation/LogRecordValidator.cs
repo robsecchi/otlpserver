@@ -1,10 +1,13 @@
 using Google.Protobuf;
+using Microsoft.Extensions.Options;
+using OpenTelemetry.Proto.Common.V1;
 using OpenTelemetry.Proto.Logs.V1;
+using OpenTelemetry.Proto.Resource.V1;
 
 namespace OtlpServer.Logs.Validation;
 
 /// <summary>
-/// Decides, record by record, what this server accepts.
+/// Decides, record by record (and for each record's resource and scope), what this server accepts.
 /// <para>
 /// The OTLP spec does NOT say which data a server must reject; it only says how to
 /// report a rejection (via <c>partial_success</c>). So this class is server policy.
@@ -17,11 +20,64 @@ namespace OtlpServer.Logs.Validation;
 ///         with a trace"), the record is kept and we emit a <see cref="IssueSeverity.Warning"/>.</item>
 /// </list>
 /// </summary>
-public sealed class LogRecordValidator: ILogRecordValidator
+public sealed class LogRecordValidator : ILogRecordValidator
 {
     private const int TraceIdLength = 16;
     private const int SpanIdLength = 8;
     private const uint ReservedFlagsMask = ~(uint)LogRecordFlags.TraceFlagsMask; // upper 24 bits
+
+    private readonly LogValidationOptions _options;
+
+    public LogRecordValidator(IOptions<LogValidationOptions> options)
+    {
+        _options = options.Value;
+    }
+
+    // "Attribute keys MUST be unique (it is not allowed to have more than one attribute with
+    //  the same key)." Same rule at every level, so one helper for all three.
+
+    public IReadOnlyList<LogRecordIssue> ValidateResource(Resource? resource)
+    {
+        var issues = new List<LogRecordIssue>();
+        if (resource is not null)
+        {
+            AddDuplicateKeyIssue(issues, "duplicate_resource_attribute_key",
+                DuplicateKeyFinder.Find(resource.Attributes, "attributes"));
+        }
+        return issues;
+    }
+
+    public IReadOnlyList<LogRecordIssue> ValidateScope(InstrumentationScope? scope)
+    {
+        var issues = new List<LogRecordIssue>();
+        if (scope is not null)
+        {
+            AddDuplicateKeyIssue(issues, "duplicate_scope_attribute_key",
+                DuplicateKeyFinder.Find(scope.Attributes, "attributes"));
+        }
+        return issues;
+    }
+
+    /// <summary>
+    /// Turns a found duplicate into an issue whose severity follows
+    /// <see cref="LogValidationOptions.DuplicateAttributeKeys"/>. The rule names differ per level
+    /// (resource / scope / record) so error_message shows each one separately.
+    /// </summary>
+    private void AddDuplicateKeyIssue(List<LogRecordIssue> issues, string rule, (string Path, string Key)? duplicate)
+    {
+        if (duplicate is not { } found) return;
+
+        var detail = $"key '{found.Key}' appears more than once in {found.Path}";
+        if (_options.DuplicateAttributeKeys == DuplicateAttributeKeyHandling.AcceptWithWarning)
+        {
+            issues.Add(new(IssueSeverity.Warning, rule,
+                $"{detail}; accepted because {LogValidationOptions.SectionName}:{nameof(LogValidationOptions.DuplicateAttributeKeys)}={DuplicateAttributeKeyHandling.AcceptWithWarning}"));
+        }
+        else
+        {
+            issues.Add(new(IssueSeverity.Rejection, rule, detail));
+        }
+    }
 
     public IReadOnlyList<LogRecordIssue> Validate(LogRecord record)
     {
@@ -38,18 +94,11 @@ public sealed class LogRecordValidator: ILogRecordValidator
                 $"severity_number={(int)record.SeverityNumber} is outside the valid range 0..24"));
         }
 
-        // "Attribute keys MUST be unique (it is not allowed to have more than one
-        //  attribute with the same key)."
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var attribute in record.Attributes)
-        {
-            if (!seen.Add(attribute.Key))
-            {
-                issues.Add(new(IssueSeverity.Rejection, "duplicate_attribute_key",
-                    $"attribute key '{attribute.Key}' appears more than once"));
-                break; // one occurrence is enough to reject the record
-            }
-        }
+        // ---- Duplicate keys: rejection or warning, depending on configuration ---------
+
+        // Attributes first, then the body (which may be a map, or contain maps).
+        AddDuplicateKeyIssue(issues, "duplicate_attribute_key",
+            DuplicateKeyFinder.Find(record.Attributes, "attributes") ?? DuplicateKeyFinder.Find(record.Body, "body"));
 
         // ---- Warnings (record still accepted) ---------------------------------------
 

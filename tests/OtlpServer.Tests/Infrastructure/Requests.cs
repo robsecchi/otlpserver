@@ -13,19 +13,33 @@ public static class Requests
     /// <summary>
     /// One resource, one scope, holding the given records, which is the shape most SDKs send.
     /// </summary>
-    public static ExportLogsServiceRequest WithRecords(params LogRecord[] records)
-    {
-        var scopeLogs = new ScopeLogs { Scope = new InstrumentationScope { Name = "tests" } };
-        scopeLogs.LogRecords.AddRange(records);
+    public static ExportLogsServiceRequest WithRecords(params LogRecord[] records) =>
+        WithResources(ResourceLogsOf(DefaultResource(), ScopeLogsOf(DefaultScope(), records)));
 
-        var resourceLogs = new ResourceLogs
-        {
-            Resource = new Resource { Attributes = { Attribute("service.name", "otlp-server-tests") } },
-            ScopeLogs = { scopeLogs },
-        };
+    public static ExportLogsServiceRequest WithResources(params ResourceLogs[] resourceLogs) =>
+        new() { ResourceLogs = { resourceLogs } };
 
-        return new ExportLogsServiceRequest { ResourceLogs = { resourceLogs } };
-    }
+    public static ResourceLogs ResourceLogsOf(Resource resource, params ScopeLogs[] scopeLogs) =>
+        new() { Resource = resource, ScopeLogs = { scopeLogs } };
+
+    public static ScopeLogs ScopeLogsOf(InstrumentationScope scope, params LogRecord[] records) =>
+        new() { Scope = scope, LogRecords = { records } };
+
+    public static Resource DefaultResource() =>
+        new() { Attributes = { Attribute("service.name", "otlp-server-tests") } };
+
+    public static InstrumentationScope DefaultScope() => new() { Name = "tests" };
+
+    /// <summary>Two different service.name values: which service sent these logs?</summary>
+    public static Resource ResourceWithDuplicateKey() =>
+        new() { Attributes = { Attribute("service.name", "a"), Attribute("service.name", "b") } };
+
+    public static InstrumentationScope ScopeWithDuplicateKey() =>
+        new() { Name = "tests", Attributes = { Attribute("x", "1"), Attribute("x", "2") } };
+
+    /// <summary>Wraps key-values in an AnyValue map (kvlist_value).</summary>
+    public static AnyValue Map(params KeyValue[] keyValues) =>
+        new() { KvlistValue = new KeyValueList { Values = { keyValues } } };
 
     /// <summary>A record with no problems at all.</summary>
     public static LogRecord ValidRecord(string body = "hello") => new()

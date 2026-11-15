@@ -15,11 +15,15 @@ namespace OtlpServer.Logs;
 ///
 ///  2. Validation
 ///     ExportLogsServiceRequest
-///       └─ ResourceLogs[]            (who produced the logs: service.name, host, ...)
-///           └─ ScopeLogs[]           (which library/logger produced them)
-///               └─ LogRecord[]  ──►  ILogRecordValidator.Validate(record)
-///                                      ├─ any Rejection?  -> outcome.RecordRejected()  (record dropped)
-///                                      └─ otherwise       -> outcome.RecordAccepted()  (warnings, if any, still reported)
+///       └─ ResourceLogs[]  ──►  ValidateResource   Rejection? -> all its records rejected, skip it
+///           │                  (who produced the logs: service.name, host, ...)
+///           └─ ScopeLogs[] ──►  ValidateScope      Rejection? -> all its records rejected, skip it
+///               │              (which library/logger produced them)
+///               └─ LogRecord[]  ──►  Validate(record)
+///                                      ├─ any Rejection?  -> record rejected (dropped)
+///                                      └─ otherwise       -> record accepted (warnings, if any, still reported)
+///     Whether duplicate attribute keys are a Rejection or a Warning is configurable
+///     (Otlp:Logs:Validation:DuplicateAttributeKeys).
 ///
 ///  3. Result
 ///     every record rejected?  ──► throw InvalidData                    (non-retryable, gRPC INVALID_ARGUMENT + BadRequest)
@@ -126,30 +130,40 @@ public sealed class LogsExportHandler : ILogsExportHandler
     {
         var outcome = new LogsExportOutcome();
 
+        // Locations are paths into the request, shown in error_message so the sender can find
+        // the problem, e.g. "resource_logs[0].scope_logs[1].log_records[7]".
         for (var r = 0; r < request.ResourceLogs.Count; r++)
         {
             var resourceLogs = request.ResourceLogs[r];
+            var recordsInResource = resourceLogs.ScopeLogs.Sum(s => (long)s.LogRecords.Count);
+            if (recordsInResource == 0) continue; // nothing to accept or drop
+
+            // A rejected resource drops every record under it, uninspected: they would be
+            // stored with an ambiguous identity.
+            if (Report(outcome, _validator.ValidateResource(resourceLogs.Resource), $"resource_logs[{r}].resource"))
+            {
+                outcome.RecordsRejected(recordsInResource);
+                continue;
+            }
 
             for (var s = 0; s < resourceLogs.ScopeLogs.Count; s++)
             {
                 var scopeLogs = resourceLogs.ScopeLogs[s];
+                if (scopeLogs.LogRecords.Count == 0) continue;
+
+                // Same idea one level down: a rejected scope drops its records.
+                if (Report(outcome, _validator.ValidateScope(scopeLogs.Scope), $"resource_logs[{r}].scope_logs[{s}].scope"))
+                {
+                    outcome.RecordsRejected(scopeLogs.LogRecords.Count);
+                    continue;
+                }
 
                 for (var l = 0; l < scopeLogs.LogRecords.Count; l++)
                 {
-                    var record = scopeLogs.LogRecords[l];
-                    var issues = _validator.Validate(record);
-
-                    // A path to the record, shown in error_message so the sender can find it.
                     var location = $"resource_logs[{r}].scope_logs[{s}].log_records[{l}]";
-                    foreach (var issue in issues)
+                    if (Report(outcome, _validator.Validate(scopeLogs.LogRecords[l]), location))
                     {
-                        outcome.AddIssue(issue, location);
-                    }
-
-                    // One Rejection is enough to drop the record. Warnings alone don't drop it.
-                    if (issues.Any(i => i.Severity == IssueSeverity.Rejection))
-                    {
-                        outcome.RecordRejected();
+                        outcome.RecordsRejected(1);
                     }
                     else
                     {
@@ -160,5 +174,18 @@ public sealed class LogsExportHandler : ILogsExportHandler
         }
 
         return outcome;
+    }
+
+    /// <summary>
+    /// Adds the issues to the outcome. Returns true if any of them is a Rejection: one is
+    /// enough to drop the item. Warnings alone never drop it.
+    /// </summary>
+    private static bool Report(LogsExportOutcome outcome, IReadOnlyList<LogRecordIssue> issues, string location)
+    {
+        foreach (var issue in issues)
+        {
+            outcome.AddIssue(issue, location);
+        }
+        return issues.Any(i => i.Severity == IssueSeverity.Rejection);
     }
 }

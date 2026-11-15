@@ -1,7 +1,9 @@
 using Google.Rpc;
 using Grpc.Core;
 using Microsoft.Extensions.DependencyInjection;
+using OpenTelemetry.Proto.Common.V1;
 using OpenTelemetry.Proto.Logs.V1;
+using OpenTelemetry.Proto.Resource.V1;
 using OtlpServer.Logs.Validation;
 using OtlpServer.Tests.Infrastructure;
 
@@ -49,5 +51,7 @@ public sealed class ExportFailureTests
     private sealed class ThrowingValidator(string message) : ILogRecordValidator
     {
         public IReadOnlyList<LogRecordIssue> Validate(LogRecord record) => throw new InvalidOperationException(message);
+        public IReadOnlyList<LogRecordIssue> ValidateResource(Resource? resource) => [];
+        public IReadOnlyList<LogRecordIssue> ValidateScope(InstrumentationScope? scope) => [];
     }
 }
