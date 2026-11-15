@@ -42,8 +42,9 @@ public sealed class LogsExportHandler : ILogsExportHandler
     private readonly ILogger<LogsExportHandler> _logger;
     private readonly LogsExportOptions _options;
 
-    // Counts the free slots for concurrent exports. The handler is a singleton, so the
-    // limit applies across all connections and (later) both transports.
+    // Counts the free slots for concurrent exports. The handler is a singleton, so this is
+    // ONE server-wide pool shared by all connections and all transports (gRPC and HTTP).
+    // That is deliberate; see LogsExportOptions.MaxConcurrentExports before changing it.
     private readonly SemaphoreSlim _admission;
 
     public LogsExportHandler(ILogRecordValidator validator, IOptions<LogsExportOptions> options, ILogger<LogsExportHandler> logger)

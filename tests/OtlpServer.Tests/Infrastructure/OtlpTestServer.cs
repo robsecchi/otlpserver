@@ -32,9 +32,14 @@ public sealed class OtlpTestServer : IAsyncDisposable
         _factory = factory;
         _channel = channel;
         Client = new LogsService.LogsServiceClient(channel);
+        Http = factory.Server.CreateClient();
     }
 
+    /// <summary>OTLP/gRPC client.</summary>
     public LogsService.LogsServiceClient Client { get; }
+
+    /// <summary>Plain HTTP client for OTLP/HTTP (same in-memory server, same singletons).</summary>
+    public HttpClient Http { get; }
 
     // Same RPC name as the generated client, but the request/response are plain bytes, so
     // tests can put anything on the wire (including bytes that aren't valid protobuf).
@@ -83,6 +88,7 @@ public sealed class OtlpTestServer : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        Http.Dispose();
         _channel.Dispose();
         await _factory.DisposeAsync();
     }

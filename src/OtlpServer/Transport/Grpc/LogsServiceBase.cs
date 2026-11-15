@@ -1,6 +1,7 @@
 using Google.Protobuf;
 using Grpc.Core;
 using OpenTelemetry.Proto.Collector.Logs.V1;
+using OtlpServer.Logs.Failures;
 
 namespace OtlpServer.Transport.Grpc;
 
@@ -57,17 +58,13 @@ public abstract class LogsServiceBase
         try
         {
             // The payload is already decompressed (and size-checked) at this point.
-            return ExportLogsServiceRequest.Parser.ParseFrom(context.PayloadAsReadOnlySequence());
+            return OtlpProtobufDecoder.ParseLogsRequest(context.PayloadAsReadOnlySequence());
         }
-        catch (InvalidProtocolBufferException ex)
+        catch (OtlpExportException failure)
         {
-            // Covers truncated data, invalid tags / wire types, and nesting deeper than the
-            // parser's recursion limit (100). The library's message is about the encoding
-            // only (no internals), so it's safe and useful to pass on.
-            // grpc-dotnet sends an RpcException thrown here as the call's status, unchanged.
-            throw new RpcException(new Status(
-                StatusCode.InvalidArgument,
-                $"Request body is not a valid ExportLogsServiceRequest protobuf message: {ex.Message}"));
+            // InvalidData → INVALID_ARGUMENT. grpc-dotnet sends an RpcException thrown here
+            // as the call's status, unchanged.
+            throw GrpcExportFailureMapper.ToRpcException(failure);
         }
     }
 

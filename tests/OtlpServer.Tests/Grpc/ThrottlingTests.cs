@@ -1,10 +1,6 @@
 using Google.Rpc;
 using Grpc.Core;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
-using OpenTelemetry.Proto.Common.V1;
-using OpenTelemetry.Proto.Logs.V1;
-using OpenTelemetry.Proto.Resource.V1;
 using OtlpServer.Logs.Validation;
 using OtlpServer.Tests.Infrastructure;
 
@@ -72,24 +68,5 @@ public sealed class ThrottlingTests
         // If the failure had leaked the only slot, this would be UNAVAILABLE.
         var response = await server.Client.ExportAsync(Requests.WithRecords(Requests.ValidRecord()));
         Assert.Null(response.PartialSuccess);
-    }
-
-    /// <summary>Blocks every Validate call until <see cref="Release"/> is set.</summary>
-    private sealed class GatedValidator : ILogRecordValidator
-    {
-        private readonly LogRecordValidator _inner = new(Options.Create(new LogValidationOptions()));
-
-        public ManualResetEventSlim Entered { get; } = new();
-        public ManualResetEventSlim Release { get; } = new();
-
-        public IReadOnlyList<LogRecordIssue> Validate(LogRecord record)
-        {
-            Entered.Set();
-            Release.Wait(TimeSpan.FromSeconds(10));
-            return _inner.Validate(record);
-        }
-
-        public IReadOnlyList<LogRecordIssue> ValidateResource(Resource? resource) => _inner.ValidateResource(resource);
-        public IReadOnlyList<LogRecordIssue> ValidateScope(InstrumentationScope? scope) => _inner.ValidateScope(scope);
     }
 }

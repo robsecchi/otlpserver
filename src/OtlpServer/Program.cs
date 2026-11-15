@@ -4,6 +4,7 @@ using OtlpServer.Logs;
 using OtlpServer.Logs.Validation;
 using OtlpServer.Transport.Grpc;
 using OtlpServer.Transport.Grpc.Compression;
+using OtlpServer.Transport.Http;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -51,10 +52,17 @@ builder.Services.AddOptions<GrpcServiceOptions>()
 
 var app = builder.Build();
 
+// google.rpc.Status bodies for ASP.NET Core's own 404 / 405 on the HTTP port.
+app.UseOtlpHttpErrorBodies();
+
+// OTLP/gRPC: opentelemetry.proto.collector.logs.v1.LogsService/Export (port 4317).
 app.MapGrpcService<LogsGrpcService>();
 
-// OTLP/HTTP transport (POST /v1/logs on port 4318) will be mapped here later,
-// reusing ILogsExportHandler.
+// OTLP/HTTP: POST /v1/logs (port 4318). Same ILogsExportHandler as gRPC.
+// Endpoints aren't restricted to a port: each port only speaks its own protocol version
+// (4317 is HTTP/2-only, which HTTP/1.1 exporters can't use; 4318 serves HTTP/1.1 in
+// plaintext), so in practice clients reach the right one.
+app.MapOtlpHttpLogs();
 
 app.Run();
 

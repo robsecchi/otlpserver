@@ -1,9 +1,6 @@
 using Google.Rpc;
 using Grpc.Core;
 using Microsoft.Extensions.DependencyInjection;
-using OpenTelemetry.Proto.Common.V1;
-using OpenTelemetry.Proto.Logs.V1;
-using OpenTelemetry.Proto.Resource.V1;
 using OtlpServer.Logs.Validation;
 using OtlpServer.Tests.Infrastructure;
 
@@ -46,12 +43,5 @@ public sealed class ExportFailureTests
         Assert.Equal(StatusCode.Internal, ex.StatusCode);
         Assert.DoesNotContain("secret internal detail", ex.Status.Detail);
         Assert.Null(ex.GetRpcStatus()?.GetDetail<RetryInfo>());
-    }
-
-    private sealed class ThrowingValidator(string message) : ILogRecordValidator
-    {
-        public IReadOnlyList<LogRecordIssue> Validate(LogRecord record) => throw new InvalidOperationException(message);
-        public IReadOnlyList<LogRecordIssue> ValidateResource(Resource? resource) => [];
-        public IReadOnlyList<LogRecordIssue> ValidateScope(InstrumentationScope? scope) => [];
     }
 }
