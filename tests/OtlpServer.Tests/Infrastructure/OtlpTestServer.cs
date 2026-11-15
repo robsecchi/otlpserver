@@ -1,3 +1,4 @@
+using Grpc.Core;
 using Grpc.Net.Client;
 using Grpc.Net.Compression;
 using Microsoft.AspNetCore.Hosting;
@@ -34,6 +35,16 @@ public sealed class OtlpTestServer : IAsyncDisposable
     }
 
     public LogsService.LogsServiceClient Client { get; }
+
+    // Same RPC name as the generated client, but the request/response are plain bytes, so
+    // tests can put anything on the wire (including bytes that aren't valid protobuf).
+    private static readonly Marshaller<byte[]> RawBytes = Marshallers.Create(b => b, b => b);
+    private static readonly Method<byte[], byte[]> RawExportMethod =
+        new(MethodType.Unary, LogsService.Descriptor.FullName, "Export", RawBytes, RawBytes);
+
+    /// <summary>Calls LogsService/Export with <paramref name="payload"/> as the exact message bytes.</summary>
+    public Task<byte[]> ExportRawAsync(byte[] payload) =>
+        _channel.CreateCallInvoker().AsyncUnaryCall(RawExportMethod, null, new CallOptions(), payload).ResponseAsync;
 
     /// <param name="settings">Configuration overrides, e.g. { "Otlp:Logs:MaxConcurrentExports", "1" }.</param>
     /// <param name="services">Replaces registrations (runs after Program.cs registered its own).</param>

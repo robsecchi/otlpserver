@@ -10,14 +10,15 @@
     Official OTLP protobuf definitions, vendored from
     https://github.com/open-telemetry/opentelemetry-proto (tag v1.7.0).
     ProtoRoot makes the "opentelemetry/proto/..." import paths resolve.
-    The collector service gets server AND client stubs (the client is used by the
-    integration tests, which must share these exact message types); the rest are plain messages.
+    The collector service gets CLIENT stubs only: the integration tests use the client and
+    must share these exact message types. The server side is hand-written
+    (Transport/Grpc/LogsServiceBase.cs) to control request decoding. The rest are plain messages.
   -->
   <ItemGroup>
     <Protobuf Include="Protos\opentelemetry\proto\common\v1\common.proto" ProtoRoot="Protos" GrpcServices="None" />
     <Protobuf Include="Protos\opentelemetry\proto\resource\v1\resource.proto" ProtoRoot="Protos" GrpcServices="None" />
     <Protobuf Include="Protos\opentelemetry\proto\logs\v1\logs.proto" ProtoRoot="Protos" GrpcServices="None" />
-    <Protobuf Include="Protos\opentelemetry\proto\collector\logs\v1\logs_service.proto" ProtoRoot="Protos" GrpcServices="Both" />
+    <Protobuf Include="Protos\opentelemetry\proto\collector\logs\v1\logs_service.proto" ProtoRoot="Protos" GrpcServices="Client" />
   </ItemGroup>
 
   <ItemGroup>

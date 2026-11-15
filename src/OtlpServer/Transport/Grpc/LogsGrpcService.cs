@@ -27,14 +27,12 @@ namespace OtlpServer.Transport.Grpc;
 ///         RESOURCE_EXHAUSTED, raised while decompressing by
 ///         <see cref="Compression.BoundedGzipCompressionProvider"/> (decompression bomb protection).</item>
 ///   <item>grpc-encoding other than gzip / identity: UNIMPLEMENTED (non-retryable).</item>
-///   <item>Bytes that aren't valid protobuf: decoding fails before this method (or any
-///         interceptor) runs, and grpc-dotnet answers UNKNOWN. That is non-retryable, so the
-///         client still drops the data, which is the correct outcome. The spec, though, recommends
-///         INVALID_ARGUMENT for non-retryable errors. Getting that code would need a custom
-///         request marshaller (a possible later refinement).</item>
+///   <item>Bytes that aren't valid protobuf (truncated, bad tags, nesting too deep):
+///         INVALID_ARGUMENT (non-retryable), raised by the request marshaller in
+///         <see cref="LogsServiceBase"/>.</item>
 /// </list>
 /// </summary>
-public sealed class LogsGrpcService(ILogsExportHandler handler, ILogger<LogsGrpcService> logger) : LogsService.LogsServiceBase
+public sealed class LogsGrpcService(ILogsExportHandler handler, ILogger<LogsGrpcService> logger) : LogsServiceBase
 {
     public override async Task<ExportLogsServiceResponse> Export(ExportLogsServiceRequest request, ServerCallContext context)
     {
