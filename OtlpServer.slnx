@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/OtlpServer/OtlpServer.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/OtlpServer.Tests/OtlpServer.Tests.csproj" />
+  </Folder>
+</Solution>
