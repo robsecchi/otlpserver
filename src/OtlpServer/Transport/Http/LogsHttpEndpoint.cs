@@ -1,6 +1,5 @@
 using System.Buffers;
 using Microsoft.Extensions.Options;
-using Microsoft.Net.Http.Headers;
 using OtlpServer.Logs;
 using OtlpServer.Logs.Failures;
 
@@ -8,14 +7,15 @@ namespace OtlpServer.Transport.Http;
 
 /// <summary>
 /// OTLP/HTTP adapter for logs: <c>POST /v1/logs</c>. The HTTP twin of LogsGrpcService; both
-/// call the same <see cref="ILogsExportHandler"/>.
+/// call the same <see cref="ILogsExportHandler"/>. Every response (success or error) uses
+/// the request's encoding: binary protobuf or OTLP/JSON.
 ///
 /// <para>How each result is reported over HTTP:</para>
 /// <code>
-///  Content-Type not application/x-protobuf ──► 415 (JSON comes in a later step)
+///  Content-Type not x-protobuf / json     ──► 415
 ///  Content-Encoding not gzip / identity   ──► 415
 ///  body over a size limit (wire or gzip)  ──► 413 (TooLarge)
-///  corrupt gzip, or invalid protobuf      ──► 400 (InvalidData)
+///  corrupt gzip, invalid protobuf / JSON  ──► 400 (InvalidData)
 ///  handler returns a response             ──► 200 + ExportLogsServiceResponse (maybe with partial_success)
 ///  handler throws OtlpExportException     ──► 400 / 503 + Retry-After / 500 (HttpExportFailureMapper)
 ///  client disconnected                    ──► nothing (no one is there to read it)
@@ -39,18 +39,19 @@ public static class LogsHttpEndpoint
         var logger = http.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(LogsHttpEndpoint));
         var cancellationToken = http.RequestAborted;
 
-        if (!IsProtobuf(http.Request.ContentType, out var unsupportedMessage))
+        // Content-Type picks the decoder, and the response is encoded the same way.
+        if (OtlpHttp.EncodingOf(http.Request) is not { } encoding)
         {
             // UNIMPLEMENTED in the body mirrors gRPC, which uses it for an unsupported grpc-encoding.
-            await OtlpHttp.WriteMessageAsync(http.Response, StatusCodes.Status415UnsupportedMediaType,
-                new Google.Rpc.Status { Code = (int)Google.Rpc.Code.Unimplemented, Message = unsupportedMessage });
+            await WriteUnsupportedAsync(http,
+                $"Unsupported Content-Type '{http.Request.ContentType ?? "(none)"}'. " +
+                $"Send {OtlpHttp.ProtobufContentType} (binary protobuf) or {OtlpHttp.JsonContentType} (OTLP/JSON).");
             return;
         }
 
-        if (!HttpRequestBodyReader.TryGetContentCoding(http.Request, out var coding, out unsupportedMessage))
+        if (!HttpRequestBodyReader.TryGetContentCoding(http.Request, out var coding, out var unsupportedCoding))
         {
-            await OtlpHttp.WriteMessageAsync(http.Response, StatusCodes.Status415UnsupportedMediaType,
-                new Google.Rpc.Status { Code = (int)Google.Rpc.Code.Unimplemented, Message = unsupportedMessage });
+            await WriteUnsupportedAsync(http, unsupportedCoding);
             return;
         }
 
@@ -59,17 +60,18 @@ public static class LogsHttpEndpoint
             // Read the whole body (decompressed, size-checked), then decode it.
             var options = http.RequestServices.GetRequiredService<IOptions<HttpTransportOptions>>().Value;
             await using var body = await HttpRequestBodyReader.ReadAsync(http, coding, options, logger, cancellationToken);
-            var request = OtlpProtobufDecoder.ParseLogsRequest(
-                new ReadOnlySequence<byte>(body.GetBuffer(), 0, (int)body.Length));
+            var request = encoding == OtlpHttp.Encoding.Json
+                ? OtlpJsonCodec.ParseLogsRequest(body.GetBuffer().AsSpan(0, (int)body.Length))
+                : OtlpProtobufDecoder.ParseLogsRequest(new ReadOnlySequence<byte>(body.GetBuffer(), 0, (int)body.Length));
 
             var response = await handler.ExportAsync(request, cancellationToken);
 
             // Full or partial success: always 200. A partial success is NOT an error.
-            await OtlpHttp.WriteMessageAsync(http.Response, StatusCodes.Status200OK, response);
+            await OtlpHttp.WriteMessageAsync(http.Response, StatusCodes.Status200OK, response, encoding);
         }
         catch (OtlpExportException failure)
         {
-            await HttpExportFailureMapper.WriteAsync(http.Response, failure);
+            await HttpExportFailureMapper.WriteAsync(http.Response, failure, encoding);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -82,34 +84,12 @@ public static class LogsHttpEndpoint
             // Anything else is a bug: log it, never send its details to the client.
             logger.LogError(ex, "Unexpected error while processing OTLP/HTTP logs export");
             await HttpExportFailureMapper.WriteAsync(http.Response,
-                OtlpExportException.Internal("Internal server error while processing the export", ex));
+                OtlpExportException.Internal("Internal server error while processing the export", ex), encoding);
         }
     }
 
-    /// <summary>
-    /// Accepts <c>application/x-protobuf</c>, case-insensitive and with any parameters
-    /// (e.g. "; charset=..."), as media types are defined to work.
-    /// </summary>
-    private static bool IsProtobuf(string? contentType, out string unsupportedMessage)
-    {
-        if (MediaTypeHeaderValue.TryParse(contentType, out var mediaType))
-        {
-            if (mediaType.MediaType.Equals(OtlpHttp.ProtobufContentType, StringComparison.OrdinalIgnoreCase))
-            {
-                unsupportedMessage = "";
-                return true;
-            }
-
-            if (mediaType.MediaType.Equals(OtlpHttp.JsonContentType, StringComparison.OrdinalIgnoreCase))
-            {
-                unsupportedMessage = $"OTLP/JSON ({OtlpHttp.JsonContentType}) is not supported yet. " +
-                                     $"Send binary protobuf with Content-Type: {OtlpHttp.ProtobufContentType}.";
-                return false;
-            }
-        }
-
-        unsupportedMessage = $"Unsupported Content-Type '{contentType ?? "(none)"}'. " +
-                             $"Send binary protobuf with Content-Type: {OtlpHttp.ProtobufContentType}.";
-        return false;
-    }
+    private static Task WriteUnsupportedAsync(HttpContext http, string message) =>
+        OtlpHttp.WriteMessageAsync(http.Response, StatusCodes.Status415UnsupportedMediaType,
+            new Google.Rpc.Status { Code = (int)Google.Rpc.Code.Unimplemented, Message = message },
+            OtlpHttp.ErrorEncodingFor(http.Request));
 }

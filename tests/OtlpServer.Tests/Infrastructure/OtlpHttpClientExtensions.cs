@@ -67,6 +67,34 @@ public static class OtlpHttpClientExtensions
         }
     }
 
+    public const string Json = "application/json";
+
+    private static readonly JsonParser JsonResponseParser = new(JsonParser.Settings.Default
+        .WithTypeRegistry(Google.Protobuf.Reflection.TypeRegistry.FromMessages(
+            Google.Rpc.BadRequest.Descriptor, Google.Rpc.RetryInfo.Descriptor)));
+
+    /// <summary>POST /v1/logs with an OTLP/JSON body (optionally gzipped).</summary>
+    public static Task<HttpResponseMessage> PostLogsJsonAsync(this HttpClient http, string json, bool gzip = false)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(json);
+        var content = new ByteArrayContent(gzip ? Gzip(bytes) : bytes);
+        content.Headers.TryAddWithoutValidation("Content-Type", Json);
+        if (gzip) content.Headers.TryAddWithoutValidation("Content-Encoding", "gzip");
+        return http.PostAsync("/v1/logs", content);
+    }
+
+    public static async Task<ExportLogsServiceResponse> ReadJsonExportResponseAsync(this HttpResponseMessage response)
+    {
+        Assert.Equal(Json, response.Content.Headers.ContentType?.MediaType);
+        return JsonResponseParser.Parse<ExportLogsServiceResponse>(await response.Content.ReadAsStringAsync());
+    }
+
+    public static async Task<Google.Rpc.Status> ReadJsonStatusAsync(this HttpResponseMessage response)
+    {
+        Assert.Equal(Json, response.Content.Headers.ContentType?.MediaType);
+        return JsonResponseParser.Parse<Google.Rpc.Status>(await response.Content.ReadAsStringAsync());
+    }
+
     public static async Task<ExportLogsServiceResponse> ReadExportResponseAsync(this HttpResponseMessage response)
     {
         Assert.Equal(Protobuf, response.Content.Headers.ContentType?.MediaType);

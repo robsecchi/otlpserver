@@ -39,7 +39,7 @@ internal static class HttpExportFailureMapper
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unmapped failure kind"),
     };
 
-    public static Task WriteAsync(HttpResponse response, OtlpExportException failure)
+    public static Task WriteAsync(HttpResponse response, OtlpExportException failure, OtlpHttp.Encoding encoding)
     {
         if (failure is { Kind: ExportFailureKind.Throttled, RetryAfter: { } delay })
         {
@@ -49,6 +49,6 @@ internal static class HttpExportFailureMapper
             response.Headers.RetryAfter = seconds.ToString(CultureInfo.InvariantCulture);
         }
 
-        return OtlpHttp.WriteMessageAsync(response, StatusCodeFor(failure.Kind), ExportFailureStatus.From(failure));
+        return OtlpHttp.WriteMessageAsync(response, StatusCodeFor(failure.Kind), ExportFailureStatus.From(failure), encoding);
     }
 }

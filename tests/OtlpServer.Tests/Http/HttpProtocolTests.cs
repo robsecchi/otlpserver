@@ -43,17 +43,6 @@ public sealed class HttpProtocolTests
         Assert.Contains("application/x-protobuf", status.Message);
     }
 
-    [Fact]
-    public async Task Json_is_415_until_it_is_implemented()
-    {
-        await using var server = OtlpTestServer.Start();
-
-        using var response = await server.Http.PostLogsAsync("{}"u8.ToArray(), "application/json");
-
-        Assert.Equal(HttpStatusCode.UnsupportedMediaType, response.StatusCode);
-        Assert.Contains("OTLP/JSON", (await response.ReadStatusAsync()).Message);
-    }
-
     [Theory]
     [InlineData("/v1/traces")]  // another signal: not served here
     [InlineData("/v1/metrics")]

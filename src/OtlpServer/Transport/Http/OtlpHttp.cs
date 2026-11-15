@@ -10,13 +10,13 @@ namespace OtlpServer.Transport.Http;
 /// OTLP/HTTP carries the same messages as OTLP/gRPC, one request per HTTP POST:
 /// </para>
 /// <code>
-///  POST /v1/logs                      Content-Type: application/x-protobuf
-///  body: ExportLogsServiceRequest     (binary protobuf, the same bytes as inside a gRPC frame)
+///  POST /v1/logs                      Content-Type: application/x-protobuf  or  application/json
+///  body: ExportLogsServiceRequest     (binary protobuf, the same bytes as inside a gRPC frame, or OTLP/JSON)
 ///
-///  200 OK                             Content-Type: application/x-protobuf
+///  200 OK                             Content-Type: same as the request
 ///  body: ExportLogsServiceResponse    (maybe with partial_success)
 ///
-///  4xx / 5xx                          Content-Type: application/x-protobuf
+///  4xx / 5xx                          Content-Type: same as the request
 ///  body: google.rpc.Status            ("MUST" for every 4xx and 5xx response)
 /// </code>
 /// </summary>
@@ -25,12 +25,40 @@ public static class OtlpHttp
     public const string ProtobufContentType = "application/x-protobuf";
     public const string JsonContentType = "application/json";
 
-    /// <summary>Writes a protobuf message as the whole response body.</summary>
-    public static async Task WriteMessageAsync(HttpResponse response, int statusCode, IMessage message)
+    /// <summary>The two OTLP/HTTP body encodings.</summary>
+    public enum Encoding { Protobuf, Json }
+
+    /// <summary>
+    /// The request's encoding, if it is one of the two OTLP ones. Media types are
+    /// case-insensitive and may carry parameters (e.g. "; charset=utf-8").
+    /// </summary>
+    public static Encoding? EncodingOf(HttpRequest request)
     {
-        var bytes = message.ToByteArray(); // responses are tiny: an empty message or a short Status
+        if (!Microsoft.Net.Http.Headers.MediaTypeHeaderValue.TryParse(request.ContentType, out var mediaType))
+        {
+            return null;
+        }
+        if (mediaType.MediaType.Equals(ProtobufContentType, StringComparison.OrdinalIgnoreCase)) return Encoding.Protobuf;
+        if (mediaType.MediaType.Equals(JsonContentType, StringComparison.OrdinalIgnoreCase)) return Encoding.Json;
+        return null;
+    }
+
+    /// <summary>
+    /// Encoding for an ERROR response: the request's, if it's one we know, else protobuf
+    /// (e.g. for a 415, whose request encoding is by definition not one we speak).
+    /// </summary>
+    public static Encoding ErrorEncodingFor(HttpRequest request) => EncodingOf(request) ?? Encoding.Protobuf;
+
+    /// <summary>Writes a message as the whole response body, in the given encoding.</summary>
+    public static async Task WriteMessageAsync(HttpResponse response, int statusCode, IMessage message, Encoding encoding)
+    {
+        // Responses are tiny (an empty message or a short Status), so they're built in memory.
+        var (bytes, contentType) = encoding == Encoding.Json
+            ? (OtlpJsonCodec.Format(message), JsonContentType)
+            : (message.ToByteArray(), ProtobufContentType);
+
         response.StatusCode = statusCode;
-        response.ContentType = ProtobufContentType;
+        response.ContentType = contentType;
         response.ContentLength = bytes.Length;
         await response.Body.WriteAsync(bytes);
     }
@@ -60,7 +88,8 @@ public static class OtlpHttp
                    $"No OTLP endpoint at '{http.Request.Path}'. This server accepts logs only: POST /v1/logs.")
                 : (Google.Rpc.Code.Unknown, $"HTTP {statusCode}.");
 
-            await WriteMessageAsync(http.Response, statusCode, new Google.Rpc.Status { Code = (int)code, Message = message });
+            await WriteMessageAsync(http.Response, statusCode, new Google.Rpc.Status { Code = (int)code, Message = message },
+                ErrorEncodingFor(http.Request));
         });
 
     /// <summary>
@@ -88,7 +117,7 @@ public static class OtlpHttp
             {
                 Code = (int)Google.Rpc.Code.Unimplemented,
                 Message = $"Method {http.Request.Method} is not allowed on {path}. OTLP/HTTP exports use POST.",
-            });
+            }, ErrorEncodingFor(http.Request));
         }).WithOrder(1).WithDisplayName($"OTLP/HTTP 405 for {path}");
 
         return endpoints.MapPost(path, handler);
