@@ -2,6 +2,7 @@ using Grpc.AspNetCore.Server;
 using Microsoft.Extensions.Options;
 using OtlpServer.Logs;
 using OtlpServer.Logs.Validation;
+using OtlpServer.Security;
 using OtlpServer.Transport.Grpc;
 using OtlpServer.Transport.Grpc.Compression;
 using OtlpServer.Transport.Http;
@@ -60,6 +61,9 @@ builder.Services.AddOptions<HttpTransportOptions>()
         $"{HttpTransportOptions.SectionName}:MaxDecompressedBodySize must be between 1 and {int.MaxValue}")
     .ValidateOnStart();
 
+// TLS / mTLS settings and the startup security report (warns about plaintext endpoints).
+builder.AddOtlpSecurity();
+
 var app = builder.Build();
 
 // google.rpc.Status bodies for ASP.NET Core's own 404 / 405 on the HTTP port.
@@ -71,7 +75,7 @@ app.MapGrpcService<LogsGrpcService>();
 // OTLP/HTTP: POST /v1/logs (port 4318). Same ILogsExportHandler as gRPC.
 // Endpoints aren't restricted to a port: each port only speaks its own protocol version
 // (4317 is HTTP/2-only, which HTTP/1.1 exporters can't use; 4318 serves HTTP/1.1 in
-// plaintext), so in practice clients reach the right one.
+// plaintext, and negotiates HTTP/1.1 or HTTP/2 with TLS), so in practice clients reach the right one.
 app.MapOtlpHttpLogs();
 
 app.Run();
