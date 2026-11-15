@@ -2,6 +2,7 @@ using Grpc.AspNetCore.Server;
 using Microsoft.Extensions.Options;
 using Microsoft.IO;
 using OtlpServer.Admission;
+using OtlpServer.Diagnostics;
 using OtlpServer.Logs;
 using OtlpServer.Logs.Validation;
 using OtlpServer.Security;
@@ -10,6 +11,10 @@ using OtlpServer.Transport.Grpc.Compression;
 using OtlpServer.Transport.Http;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Warnings that can repeat thousands of times per second are aggregated (one line per source per 10 s).
+builder.Services.AddSingleton<AggregatedWarnings>();
+builder.Services.AddHostedService<AggregatedWarningsFlusher>();
 
 // Core (transport-agnostic) services.
 builder.Services.Configure<LogsExportOptions>(builder.Configuration.GetSection(LogsExportOptions.SectionName));
@@ -33,9 +38,9 @@ builder.Services.AddOptions<GrpcTransportOptions>()
 builder.Services.AddGrpc();
 
 // Apply the transport options to grpc-dotnet. This is done through DI (instead of inside
-// AddGrpc(o => ...)) so we can use the bound GrpcTransportOptions and a logger.
+// AddGrpc(o => ...)) so we can use the bound GrpcTransportOptions and AggregatedWarnings.
 builder.Services.AddOptions<GrpcServiceOptions>()
-    .Configure<IOptions<GrpcTransportOptions>, ILoggerFactory>((grpc, transport, loggerFactory) =>
+    .Configure<IOptions<GrpcTransportOptions>, AggregatedWarnings>((grpc, transport, warnings) =>
     {
         // Limit 1 (wire size): enforced by grpc-dotnet, answers RESOURCE_EXHAUSTED.
         grpc.MaxReceiveMessageSize = transport.Value.MaxReceiveMessageSize;
@@ -46,7 +51,7 @@ builder.Services.AddOptions<GrpcServiceOptions>()
         [
             new BoundedGzipCompressionProvider(
                 transport.Value.EffectiveMaxDecompressedMessageSize,
-                loggerFactory.CreateLogger<BoundedGzipCompressionProvider>()),
+                warnings),
         ];
 
         // Responses stay uncompressed (ResponseCompressionAlgorithm left null): they are

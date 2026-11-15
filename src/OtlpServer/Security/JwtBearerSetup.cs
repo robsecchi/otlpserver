@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using OtlpServer.Diagnostics;
 
 namespace OtlpServer.Security;
 
@@ -25,10 +26,8 @@ public static class JwtBearerSetup
     private const string UnavailableItem = "otlp.jwt.unavailable";
     private const string FailureItem = "otlp.jwt.failure";
 
-    public static void Configure(JwtBearerOptions options, JwtAuthenticationOptions jwt, ILoggerFactory loggerFactory)
+    public static void Configure(JwtBearerOptions options, JwtAuthenticationOptions jwt, AggregatedWarnings warnings)
     {
-        var logger = loggerFactory.CreateLogger(typeof(JwtBearerSetup));
-
         options.Authority = jwt.Authority;
         options.RequireHttpsMetadata = jwt.RequireHttpsMetadata;
         // Keep claim names exactly as the STS wrote them ("scope", "azp", "sub"), instead of
@@ -66,7 +65,8 @@ public static class JwtBearerSetup
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    logger.LogWarning(ex, "Cannot validate OTLP tokens: the STS at {Authority} is unreachable", jwt.Authority);
+                    // Aggregated: during an outage, EVERY request with a token ends up here.
+                    warnings.Report("Cannot validate OTLP tokens: the STS is unreachable", jwt.Authority ?? "(no authority)", ex.Message);
                     context.HttpContext.Items[UnavailableItem] = true;
                     context.Fail("The token issuer (STS) is unreachable.");
                 }
@@ -76,9 +76,9 @@ public static class JwtBearerSetup
             {
                 var message = Describe(context.Exception);
                 context.HttpContext.Items[FailureItem] = message;
-                // Never log the token itself.
-                logger.LogWarning("Rejected OTLP export from {RemoteIp}: {Reason}",
-                    context.HttpContext.Connection.RemoteIpAddress, message);
+                // Never log the token itself. Aggregated per remote address.
+                warnings.Report("Rejected OTLP export: invalid token",
+                    context.HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown address", message);
                 return Task.CompletedTask;
             },
 
@@ -166,6 +166,6 @@ public static class JwtBearerSetup
     /// <summary>Registers the JwtBearer options, bound to our settings.</summary>
     public static void AddOptions(IServiceCollection services) =>
         services.AddOptions<JwtBearerOptions>(SchemeName)
-            .Configure<IOptions<SecurityOptions>, ILoggerFactory>((options, security, loggerFactory) =>
-                Configure(options, security.Value.Authentication.Jwt, loggerFactory));
+            .Configure<IOptions<SecurityOptions>, AggregatedWarnings>((options, security, warnings) =>
+                Configure(options, security.Value.Authentication.Jwt, warnings));
 }

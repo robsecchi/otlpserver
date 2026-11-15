@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
+using OtlpServer.Diagnostics;
 
 namespace OtlpServer.Security;
 
@@ -32,7 +33,9 @@ public sealed class ApiKeyAuthenticationHandler(
     IOptionsMonitor<AuthenticationSchemeOptions> schemeOptions,
     ILoggerFactory loggerFactory,
     UrlEncoder encoder,
-    ApiKeyStore keys)
+    ApiKeyStore keys,
+    AggregatedWarnings warnings,
+    IOptions<SecurityOptions> security)
     : AuthenticationHandler<AuthenticationSchemeOptions>(schemeOptions, loggerFactory, encoder)
 {
     public const string SchemeName = "OtlpApiKey";
@@ -43,12 +46,23 @@ public sealed class ApiKeyAuthenticationHandler(
     /// <summary>Claim saying which method authenticated the client: "apikey" or "jwt".</summary>
     public const string AuthMethodClaim = "otlp_auth_method";
 
+    private const string MissingHeader = "Missing Authorization header. Send 'Authorization: Bearer <key>'.";
+
     protected override Task<AuthenticateResult> HandleAuthenticateAsync()
     {
+        // ASP.NET Core authenticates EVERY request with the default scheme, whatever the mode. With
+        // authentication off, there is nothing to check: don't hash keys or log anything.
+        if (security.Value.Authentication.Mode == OtlpAuthenticationMode.None)
+        {
+            return Task.FromResult(AuthenticateResult.NoResult());
+        }
+
+        // No credentials is "no result", not a failure (as ASP.NET's own handlers do): the
+        // challenge still answers 401 "missing", and nothing is logged per request.
         string? header = Request.Headers.Authorization;
         if (string.IsNullOrEmpty(header))
         {
-            return Task.FromResult(AuthenticateResult.Fail("Missing Authorization header. Send 'Authorization: Bearer <key>'."));
+            return Task.FromResult(AuthenticateResult.NoResult());
         }
 
         if (!AuthenticationHeaderValue.TryParse(header, out var value) ||
@@ -60,9 +74,11 @@ public sealed class ApiKeyAuthenticationHandler(
 
         if (keys.FindClient(value.Parameter) is not { } clientName)
         {
-            // Never log the key itself, not even a prefix.
-            // TODO (step 7): a metric; under attack, one log line per bad key could flood the logs.
-            Logger.LogWarning("Rejected OTLP export from {RemoteIp}: invalid API key", Context.Connection.RemoteIpAddress);
+            // Never log the key itself, not even a prefix. Aggregated per remote address: under
+            // attack, a line per bad key would flood the log.
+            warnings.Report("Rejected OTLP export: invalid API key",
+                Context.Connection.RemoteIpAddress?.ToString() ?? "unknown address",
+                "the presented API key matches no configured client");
             return Task.FromResult(AuthenticateResult.Fail("Invalid API key."));
         }
 
@@ -83,7 +99,7 @@ public sealed class ApiKeyAuthenticationHandler(
     protected override async Task HandleChallengeAsync(AuthenticationProperties properties)
     {
         var result = await HandleAuthenticateOnceSafeAsync();
-        await AuthenticationResponses.UnauthenticatedAsync(Context, result.Failure?.Message ?? "Authentication required.");
+        await AuthenticationResponses.UnauthenticatedAsync(Context, result.Failure?.Message ?? MissingHeader);
     }
 
     /// <summary>Authenticated, but the authorization policy said no: PERMISSION_DENIED / 403.</summary>

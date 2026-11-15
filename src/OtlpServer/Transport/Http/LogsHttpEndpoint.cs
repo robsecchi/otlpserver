@@ -1,6 +1,7 @@
 using System.Buffers;
 using Microsoft.Extensions.Options;
 using Microsoft.IO;
+using OtlpServer.Diagnostics;
 using OpenTelemetry.Proto.Collector.Logs.V1;
 using OtlpServer.Logs;
 using OtlpServer.Logs.Failures;
@@ -63,7 +64,8 @@ public static class LogsHttpEndpoint
             var options = http.RequestServices.GetRequiredService<IOptions<HttpTransportOptions>>().Value;
             var buffers = http.RequestServices.GetRequiredService<RecyclableMemoryStreamManager>();
             ExportLogsServiceRequest request;
-            await using (var body = await HttpRequestBodyReader.ReadAsync(http, coding, options, buffers, logger, cancellationToken))
+            var warnings = http.RequestServices.GetRequiredService<AggregatedWarnings>();
+            await using (var body = await HttpRequestBodyReader.ReadAsync(http, coding, options, buffers, warnings, cancellationToken))
             {
                 // Decoded straight from the pooled blocks (no copy). The parsed message owns its
                 // own data, so the blocks go back to the pool right here, before validation.
@@ -73,7 +75,7 @@ public static class LogsHttpEndpoint
                     : OtlpProtobufDecoder.ParseLogsRequest(bytes);
             }
 
-            var response = await handler.ExportAsync(request, cancellationToken);
+            var response = await handler.ExportAsync(request, ExportContextFactory.From(http), cancellationToken);
 
             // Full or partial success: always 200. A partial success is NOT an error.
             await OtlpHttp.WriteMessageAsync(http.Response, StatusCodes.Status200OK, response, encoding);

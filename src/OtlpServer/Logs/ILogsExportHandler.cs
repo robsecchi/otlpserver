@@ -13,5 +13,6 @@ namespace OtlpServer.Logs;
 /// </summary>
 public interface ILogsExportHandler
 {
-    Task<ExportLogsServiceResponse> ExportAsync(ExportLogsServiceRequest request, CancellationToken cancellationToken);
+    /// <param name="context">Who sent it (filled in by the transport from the authenticated request).</param>
+    Task<ExportLogsServiceResponse> ExportAsync(ExportLogsServiceRequest request, ExportContext context, CancellationToken cancellationToken);
 }

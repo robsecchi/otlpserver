@@ -41,7 +41,7 @@ public sealed class ExportAdmissionMiddleware(
             return;
         }
 
-        var client = http.User.FindFirst(ApiKeyAuthenticationHandler.ClientNameClaim)?.Value;
+        var client = ExportContextFactory.From(http).Client;
         var decision = admission.TryEnter(client, out var lease);
 
         if (decision != AdmissionDecision.Admitted)

@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Options;
 using OpenTelemetry.Proto.Collector.Logs.V1;
+using OtlpServer.Diagnostics;
 using OtlpServer.Logs.Failures;
 using OtlpServer.Logs.Validation;
 
@@ -40,16 +41,19 @@ public sealed class LogsExportHandler : ILogsExportHandler
 {
     private readonly ILogRecordValidator _validator;
     private readonly ILogger<LogsExportHandler> _logger;
+    private readonly AggregatedWarnings _warnings;
     private readonly LogsExportOptions _options;
 
-    public LogsExportHandler(ILogRecordValidator validator, IOptions<LogsExportOptions> options, ILogger<LogsExportHandler> logger)
+    public LogsExportHandler(
+        ILogRecordValidator validator, IOptions<LogsExportOptions> options, AggregatedWarnings warnings, ILogger<LogsExportHandler> logger)
     {
         _validator = validator;
         _logger = logger;
+        _warnings = warnings;
         _options = options.Value;
     }
 
-    public async Task<ExportLogsServiceResponse> ExportAsync(ExportLogsServiceRequest request, CancellationToken cancellationToken)
+    public async Task<ExportLogsServiceResponse> ExportAsync(ExportLogsServiceRequest request, ExportContext context, CancellationToken cancellationToken)
     {
         if (_options.SimulatedProcessingDelay > TimeSpan.Zero)
         {
@@ -59,9 +63,10 @@ public sealed class LogsExportHandler : ILogsExportHandler
         // ---- 1. Validation --------------------------------------------------------
         var outcome = Validate(request);
 
-        _logger.LogInformation(
-            "Logs export processed: {Accepted} accepted, {Rejected} rejected, {Warnings} warning(s)",
-            outcome.AcceptedLogRecords, outcome.RejectedLogRecords, outcome.WarningCount);
+        // Debug: at load this runs thousands of times per second. Throughput is for metrics.
+        _logger.LogDebug(
+            "Logs export from {Client} processed: {Accepted} accepted, {Rejected} rejected, {Warnings} warning(s)",
+            context.ClientOrAnonymous, outcome.AcceptedLogRecords, outcome.RejectedLogRecords, outcome.WarningCount);
 
         // ---- 2. Result ------------------------------------------------------------
         // Partial success is for requests where the server "accepts only parts of the
@@ -72,7 +77,9 @@ public sealed class LogsExportHandler : ILogsExportHandler
         if (outcome.IsFullyRejected)
         {
             var message = outcome.BuildErrorMessage();
-            _logger.LogWarning("Rejecting entire logs export: {Message}", message);
+            // Aggregated: a client sending bad data does so on EVERY export.
+            _warnings.Report("Rejected entire logs export", context.ClientOrAnonymous, message,
+                outcome.RejectedLogRecords, "records rejected");
             throw OtlpExportException.InvalidData(message, outcome.GetViolations());
         }
 
@@ -93,8 +100,9 @@ public sealed class LogsExportHandler : ILogsExportHandler
         var response = outcome.ToResponse();
         if (response.PartialSuccess is { } partial)
         {
-            _logger.LogWarning("Responding with partial_success: rejected_log_records={Rejected}, error_message={Message}",
-                partial.RejectedLogRecords, partial.ErrorMessage);
+            _warnings.Report(
+                partial.RejectedLogRecords > 0 ? "Partially rejected logs export" : "Logs export accepted with data warnings",
+                context.ClientOrAnonymous, partial.ErrorMessage, partial.RejectedLogRecords, "records rejected");
         }
 
         return response;

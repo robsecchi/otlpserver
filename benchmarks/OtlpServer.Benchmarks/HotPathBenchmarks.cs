@@ -41,6 +41,7 @@ public class HotPathBenchmarks
         _handler = new LogsExportHandler(
             new LogRecordValidator(Options.Create(new LogValidationOptions())),
             Options.Create(new LogsExportOptions()),
+            new OtlpServer.Diagnostics.AggregatedWarnings(NullLogger<OtlpServer.Diagnostics.AggregatedWarnings>.Instance),
             NullLogger<LogsExportHandler>.Instance);
 
         Console.WriteLine($"// {Records} records: protobuf {_protobuf.Length:N0} bytes, JSON {_json.Length:N0} bytes");
@@ -54,7 +55,7 @@ public class HotPathBenchmarks
     public ExportLogsServiceRequest DecodeJson() => OtlpJsonCodec.ParseLogsRequest(_json);
 
     [Benchmark(Description = "core handler (validate + respond)")]
-    public Task<ExportLogsServiceResponse> Handle() => _handler.ExportAsync(_request, CancellationToken.None);
+    public Task<ExportLogsServiceResponse> Handle() => _handler.ExportAsync(_request, ExportContext.Anonymous, CancellationToken.None);
 
     private static string ToOtlpJson(ExportLogsServiceRequest request)
     {

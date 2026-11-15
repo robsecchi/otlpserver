@@ -83,17 +83,19 @@ public sealed class AllocationTests
     {
         // Only the per-export objects (outcome, response, task) are left: a few hundred bytes,
         // the same for 10 or 1,000 records. Before S2.3: ~1 KB PER record.
-        var handler = new LogsExportHandler(Validator, Options.Create(new LogsExportOptions()), NullLogger<LogsExportHandler>.Instance);
+        var handler = new LogsExportHandler(Validator, Options.Create(new LogsExportOptions()),
+            new OtlpServer.Diagnostics.AggregatedWarnings(NullLogger<OtlpServer.Diagnostics.AggregatedWarnings>.Instance),
+            NullLogger<LogsExportHandler>.Instance);
         var small = WithRecords(Enumerable.Range(0, 10).Select(_ => CleanRecord()).ToArray());
         var large = WithRecords(Enumerable.Range(0, 1000).Select(_ => CleanRecord()).ToArray());
-        await handler.ExportAsync(small, CancellationToken.None); // warm up
+        await handler.ExportAsync(small, ExportContext.Anonymous, CancellationToken.None); // warm up
 
         var before = GC.GetAllocatedBytesForCurrentThread();
-        await handler.ExportAsync(small, CancellationToken.None);
+        await handler.ExportAsync(small, ExportContext.Anonymous, CancellationToken.None);
         var forSmall = GC.GetAllocatedBytesForCurrentThread() - before;
 
         before = GC.GetAllocatedBytesForCurrentThread();
-        await handler.ExportAsync(large, CancellationToken.None);
+        await handler.ExportAsync(large, ExportContext.Anonymous, CancellationToken.None);
         var forLarge = GC.GetAllocatedBytesForCurrentThread() - before;
 
         Assert.Equal(forSmall, forLarge);

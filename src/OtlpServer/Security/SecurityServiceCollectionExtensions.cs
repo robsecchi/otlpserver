@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Server.Kestrel.Https;
 using Microsoft.Extensions.Options;
+using OtlpServer.Diagnostics;
 
 namespace OtlpServer.Security;
 
@@ -42,9 +43,9 @@ public static class SecurityServiceCollectionExtensions
                     ClientCertificateValidator? validator = null;
                     https.ClientCertificateValidation = (certificate, chain, errors) =>
                     {
-                        // Created on first use: the logger comes from DI, which isn't ready yet here.
+                        // Created on first use: its dependencies come from DI, which isn't ready yet here.
                         validator ??= new ClientCertificateValidator(roots,
-                            kestrel.ApplicationServices.GetRequiredService<ILogger<ClientCertificateValidator>>());
+                            kestrel.ApplicationServices.GetRequiredService<AggregatedWarnings>());
                         return validator.Validate(certificate, chain, errors);
                     };
                 }
@@ -79,6 +80,11 @@ public static class SecurityServiceCollectionExtensions
             .AddJwtBearer(JwtBearerSetup.SchemeName, _ => { });
         JwtBearerSetup.AddOptions(builder.Services);
         builder.Services.AddAuthorization();
+
+        // ASP.NET Core's authentication handlers log every failed attempt at Information. That
+        // is one line per request under attack, and we already report failures (aggregated)
+        // ourselves. JwtBearer logs under Microsoft.AspNetCore, already at Warning by default.
+        builder.Logging.AddFilter(typeof(ApiKeyAuthenticationHandler).FullName, LogLevel.Warning);
 
         builder.Services.AddHostedService<SecurityStartupReport>();
         return builder;

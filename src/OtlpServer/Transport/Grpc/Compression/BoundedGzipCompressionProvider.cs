@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using Grpc.Core;
 using Grpc.Net.Compression;
+using OtlpServer.Diagnostics;
 using OtlpServer.Logs.Failures;
 
 namespace OtlpServer.Transport.Grpc.Compression;
@@ -35,13 +36,13 @@ namespace OtlpServer.Transport.Grpc.Compression;
 public sealed class BoundedGzipCompressionProvider : ICompressionProvider
 {
     private readonly long _maxDecompressedBytes;
-    private readonly ILogger _logger;
+    private readonly AggregatedWarnings _warnings;
 
-    public BoundedGzipCompressionProvider(long maxDecompressedBytes, ILogger<BoundedGzipCompressionProvider> logger)
+    public BoundedGzipCompressionProvider(long maxDecompressedBytes, AggregatedWarnings warnings)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxDecompressedBytes);
         _maxDecompressedBytes = maxDecompressedBytes;
-        _logger = logger;
+        _warnings = warnings;
     }
 
     /// <summary>Matched against the request's <c>grpc-encoding</c> header.</summary>
@@ -69,11 +70,9 @@ public sealed class BoundedGzipCompressionProvider : ICompressionProvider
     {
         // Probably hostile, or a misconfigured client sending huge batches; either way worth
         // knowing about.
-        // TODO: replace (or complement) with a metric. Under attack, one log line per refusal
-        // could itself flood the logs.
-        _logger.LogWarning(
-            "Rejected gzip message: decompressed size exceeded {Limit} bytes (stopped after {BytesSoFar} bytes)",
-            _maxDecompressedBytes, bytesSoFar);
+        // Aggregated (a flood of bombs costs one line per interval), and a metric in S3.
+        _warnings.Report("Rejected gzip message (gRPC): decompressed size over the limit", "gRPC",
+            $"decompressed size exceeded {_maxDecompressedBytes} bytes (stopped after {bytesSoFar} bytes)");
 
         // TooLarge → RESOURCE_EXHAUSTED without RetryInfo (non-retryable), the same failure
         // kind OTLP/HTTP reports as 413.

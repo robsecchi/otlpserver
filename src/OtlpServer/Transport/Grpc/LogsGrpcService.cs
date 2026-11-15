@@ -38,7 +38,7 @@ public sealed class LogsGrpcService(ILogsExportHandler handler, ILogger<LogsGrpc
     {
         try
         {
-            return await handler.ExportAsync(request, context.CancellationToken);
+            return await handler.ExportAsync(request, ExportContextFactory.From(context.GetHttpContext()), context.CancellationToken);
         }
         catch (OtlpExportException failure)
         {

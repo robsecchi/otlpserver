@@ -1,6 +1,7 @@
 using System.Net.Security;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using OtlpServer.Diagnostics;
 
 namespace OtlpServer.Security;
 
@@ -18,7 +19,7 @@ namespace OtlpServer.Security;
 ///                      └─ fail → handshake fails: no HTTP request ever reaches the app
 /// </code>
 /// </summary>
-public sealed class ClientCertificateValidator(X509Certificate2Collection trustedRoots, ILogger logger)
+public sealed class ClientCertificateValidator(X509Certificate2Collection trustedRoots, AggregatedWarnings warnings)
 {
     // id-kp-clientAuth: the certificate is meant to authenticate a CLIENT. A server certificate
     // signed by the same CA must not be usable as a client identity. (A certificate with no
@@ -66,9 +67,9 @@ public sealed class ClientCertificateValidator(X509Certificate2Collection truste
             return true;
         }
 
-        logger.LogWarning(
-            "Rejected client certificate '{Subject}' (thumbprint {Thumbprint}): {Problems}",
-            certificate.Subject, certificate.Thumbprint,
+        // Aggregated per certificate: a misconfigured client retries the same handshake forever.
+        warnings.Report("Rejected client certificate", $"'{certificate.Subject}'",
+            $"thumbprint {certificate.Thumbprint}: " +
             string.Join("; ", chain.ChainStatus.Select(s => s.StatusInformation.Trim()).Distinct()));
         return false;
     }

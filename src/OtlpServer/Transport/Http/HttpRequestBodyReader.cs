@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.IO;
+using OtlpServer.Diagnostics;
 using OtlpServer.Logs.Failures;
 
 namespace OtlpServer.Transport.Http;
@@ -67,7 +68,7 @@ internal static class HttpRequestBodyReader
     /// </returns>
     public static async Task<RecyclableMemoryStream> ReadAsync(
         HttpContext http, ContentCoding coding, HttpTransportOptions options, RecyclableMemoryStreamManager buffers,
-        ILogger logger, CancellationToken cancellationToken)
+        AggregatedWarnings warnings, CancellationToken cancellationToken)
     {
         var maxWire = options.MaxRequestBodySize;
 
@@ -104,9 +105,8 @@ internal static class HttpRequestBodyReader
                     bytesSoFar =>
                     {
                         // Same warning as the gRPC provider: probably a bomb or a misconfigured client.
-                        logger.LogWarning(
-                            "Rejected gzip body: decompressed size exceeded {Limit} bytes (stopped after {BytesSoFar} bytes)",
-                            maxDecompressed, bytesSoFar);
+                        warnings.Report("Rejected gzip body (HTTP): decompressed size over the limit", "HTTP",
+                            $"decompressed size exceeded {maxDecompressed} bytes (stopped after {bytesSoFar} bytes)");
                         return OtlpExportException.TooLarge(
                             $"Decompressed request body exceeds the maximum allowed size of {maxDecompressed} bytes. " +
                             "Send smaller batches (e.g. lower the exporter's max batch size).");

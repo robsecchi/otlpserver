@@ -52,7 +52,7 @@ public sealed class MutualTlsTests : IClassFixture<TestCertificates>
         using var http = server.HttpClient(_tls, _tls.UntrustedClientCertificate);
 
         await Assert.ThrowsAnyAsync<HttpRequestException>(() => http.PostLogsAsync(WithRecords(ValidRecord())));
-        Assert.Contains(server.Logs, l => l.Level == LogLevel.Warning && l.Message.Contains("Rejected client certificate 'CN=intruder'"));
+        Assert.Contains(server.Logs, l => l.Level == LogLevel.Warning && l.Message.Contains("Rejected client certificate ('CN=intruder')"));
     }
 
     [Fact]
@@ -64,7 +64,7 @@ public sealed class MutualTlsTests : IClassFixture<TestCertificates>
 
         await Assert.ThrowsAnyAsync<HttpRequestException>(() => http.PostLogsAsync(WithRecords(ValidRecord())));
         // Refused by OUR usage check (not, say, because the client never sent it).
-        Assert.Contains(server.Logs, l => l.Message.Contains("Rejected client certificate 'CN=not-a-client'"));
+        Assert.Contains(server.Logs, l => l.Message.Contains("Rejected client certificate ('CN=not-a-client')"));
     }
 
     [Fact]
