@@ -7,7 +7,7 @@ namespace OtlpServer.Security;
 ///
 /// <para>
 /// The DEFAULT is insecure on purpose, for development and testing: plaintext, no client
-/// certificates, no authentication. A warning is logged at startup for each endpoint
+/// certificates, no authentication. Warnings are logged at startup for each endpoint
 /// running that way (see <see cref="SecurityStartupReport"/>).
 /// </para>
 /// <para>Turning TLS on is plain Kestrel configuration: an https:// URL plus a certificate:</para>
@@ -29,14 +29,18 @@ public sealed class SecurityOptions
     public const string SectionName = "Otlp:Security";
 
     /// <summary>
-    /// Opt-in hardening. When true, the server REFUSES TO START if any endpoint is plaintext,
-    /// instead of only logging a warning. Meant for deployments: one setting guarantees the
-    /// server never runs open by accident.
+    /// Opt-in hardening. When true, the server REFUSES TO START if any endpoint is plaintext or
+    /// unauthenticated, instead of only logging a warning. Meant for deployments: one setting
+    /// guarantees the server never runs open by accident. An endpoint counts as authenticated
+    /// with API keys, or with TLS + required client certificates (mTLS).
     /// </summary>
     public bool RequireSecure { get; set; }
 
     /// <summary>Mutual TLS: whether clients must present a certificate, and which CA must have signed it.</summary>
     public ClientCertificateOptions ClientCertificates { get; set; } = new();
+
+    /// <summary>Who may export: none (default) or bearer API keys.</summary>
+    public OtlpAuthenticationOptions Authentication { get; set; } = new();
 }
 
 /// <summary>

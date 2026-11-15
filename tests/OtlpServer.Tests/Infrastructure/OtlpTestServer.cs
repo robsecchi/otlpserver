@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Grpc.Core;
 using Grpc.Net.Client;
 using Grpc.Net.Compression;
@@ -5,6 +6,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using OpenTelemetry.Proto.Collector.Logs.V1;
 
 namespace OtlpServer.Tests.Infrastructure;
@@ -27,10 +29,11 @@ public sealed class OtlpTestServer : IAsyncDisposable
     private readonly WebApplicationFactory<Program> _factory;
     private readonly GrpcChannel _channel;
 
-    private OtlpTestServer(WebApplicationFactory<Program> factory, GrpcChannel channel)
+    private OtlpTestServer(WebApplicationFactory<Program> factory, GrpcChannel channel, ConcurrentQueue<(LogLevel, string)> logs)
     {
         _factory = factory;
         _channel = channel;
+        Logs = logs;
         Client = new LogsService.LogsServiceClient(channel);
         Http = factory.Server.CreateClient();
     }
@@ -40,6 +43,9 @@ public sealed class OtlpTestServer : IAsyncDisposable
 
     /// <summary>Plain HTTP client for OTLP/HTTP (same in-memory server, same singletons).</summary>
     public HttpClient Http { get; }
+
+    /// <summary>Everything the app logged.</summary>
+    public ConcurrentQueue<(LogLevel Level, string Message)> Logs { get; }
 
     // Same RPC name as the generated client, but the request/response are plain bytes, so
     // tests can put anything on the wire (including bytes that aren't valid protobuf).
@@ -59,8 +65,11 @@ public sealed class OtlpTestServer : IAsyncDisposable
         Action<IServiceCollection>? services = null,
         IList<ICompressionProvider>? clientCompressionProviders = null)
     {
+        var logs = new ConcurrentQueue<(LogLevel, string)>();
         var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
+            builder.ConfigureLogging(logging => logging.AddProvider(new CapturingLoggerProvider(logs)));
+
             // UseSetting goes into the app configuration before Program.cs reads it.
             foreach (var (key, value) in settings ?? new Dictionary<string, string?>())
             {
@@ -83,7 +92,7 @@ public sealed class OtlpTestServer : IAsyncDisposable
         }
 
         var channel = GrpcChannel.ForAddress(factory.Server.BaseAddress, channelOptions);
-        return new OtlpTestServer(factory, channel);
+        return new OtlpTestServer(factory, channel, logs);
     }
 
     public async ValueTask DisposeAsync()

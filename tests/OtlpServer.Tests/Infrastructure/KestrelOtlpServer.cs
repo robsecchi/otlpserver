@@ -107,18 +107,4 @@ public sealed class KestrelOtlpServer : IAsyncDisposable
         listener.Start();
         return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
-
-    private sealed class CapturingLoggerProvider(ConcurrentQueue<(LogLevel, string)> logs) : ILoggerProvider
-    {
-        public ILogger CreateLogger(string categoryName) => new Logger(logs);
-        public void Dispose() { }
-
-        private sealed class Logger(ConcurrentQueue<(LogLevel, string)> logs) : ILogger
-        {
-            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-            public bool IsEnabled(LogLevel logLevel) => true;
-            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
-                logs.Enqueue((logLevel, formatter(state, exception)));
-        }
-    }
 }

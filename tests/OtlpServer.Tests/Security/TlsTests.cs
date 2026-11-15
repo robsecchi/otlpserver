@@ -76,7 +76,7 @@ public sealed class TlsTests : IClassFixture<TestCertificates>
     }
 
     [Fact]
-    public async Task Tls_endpoints_are_reported_without_warnings()
+    public async Task Tls_endpoints_are_reported_without_tls_warnings()
     {
         await using var server = KestrelOtlpServer.Start(_tls);
 
@@ -90,16 +90,19 @@ public sealed class TlsTests : IClassFixture<TestCertificates>
         var ex = Assert.ThrowsAny<Exception>(() => KestrelOtlpServer.Start(tls: null,
             new Dictionary<string, string?> { ["Otlp:Security:RequireSecure"] = "true" }));
 
-        Assert.Contains("RequireSecure is true, but these endpoints have no TLS", ex.ToString());
+        Assert.Contains("RequireSecure is true", ex.ToString());
+        Assert.Contains("has no TLS", ex.ToString());
     }
 
     [Fact]
-    public async Task Require_secure_starts_when_every_endpoint_has_tls()
+    public void Require_secure_also_needs_authentication_not_just_tls()
     {
-        await using var server = KestrelOtlpServer.Start(_tls,
-            new Dictionary<string, string?> { ["Otlp:Security:RequireSecure"] = "true" });
+        // TLS everywhere, but anyone can still export: not "secure" yet.
+        var ex = Assert.ThrowsAny<Exception>(() => KestrelOtlpServer.Start(_tls,
+            new Dictionary<string, string?> { ["Otlp:Security:RequireSecure"] = "true" }));
 
-        Assert.Null((await server.GrpcClient(_tls).ExportAsync(WithRecords(ValidRecord()))).PartialSuccess);
+        Assert.Contains("has no authentication", ex.ToString());
+        Assert.DoesNotContain("has no TLS", ex.ToString());
     }
 
     [Fact]
